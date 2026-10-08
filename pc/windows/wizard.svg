@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="328" height="628" viewBox="0 0 328 628">
+  <!-- Картинка слева на первой и последней страницах установщика (пропорции 164:314). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3584e4"/>
+      <stop offset="1" stop-color="#162f5c"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#57e389" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#57e389" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="floor">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="328" height="628" fill="url(#bg)"/>
+  <g fill="none" stroke="#fff" stroke-opacity="0.08" stroke-width="2">
+    <path d="M0 470 H328 M0 500 H328 M0 536 H328 M0 580 H328"/>
+    <path d="M164 450 L164 628 M164 450 L60 628 M164 450 L268 628 M164 450 L-40 628 M164 450 L368 628"/>
+  </g>
+  <ellipse cx="164" cy="532" rx="120" ry="30" fill="url(#floor)"/>
+
+  <g fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M164 196 L164 330"/>
+    <path d="M164 212 L118 270 L104 336 M164 212 L210 270 L224 336"/>
+    <path d="M164 330 L138 424 L130 516 M164 330 L190 424 L198 516"/>
+  </g>
+  <circle cx="164" cy="150" r="34" fill="#fff"/>
+
+  <g fill="url(#glow)">
+    <circle cx="164" cy="246" r="34"/>
+    <circle cx="164" cy="330" r="34"/>
+    <circle cx="118" cy="270" r="30"/>
+    <circle cx="210" cy="270" r="30"/>
+    <circle cx="138" cy="424" r="32"/>
+    <circle cx="190" cy="424" r="32"/>
+    <circle cx="130" cy="516" r="40"/>
+    <circle cx="198" cy="516" r="40"/>
+  </g>
+  <g fill="#57e389" stroke="#0b3f8c" stroke-width="5">
+    <circle cx="164" cy="246" r="11"/>
+    <circle cx="164" cy="330" r="12"/>
+    <circle cx="118" cy="270" r="10"/>
+    <circle cx="210" cy="270" r="10"/>
+    <circle cx="138" cy="424" r="11"/>
+    <circle cx="190" cy="424" r="11"/>
+    <circle cx="130" cy="516" r="15"/>
+    <circle cx="198" cy="516" r="15"/>
+  </g>
+</svg>

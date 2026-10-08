@@ -1,0 +1,212 @@
+# Полная сборка проекта:
+#   driver  — драйвер SteamVR под Linux (.so, glibc ≤ 2.31) и Windows (.dll);
+#   headset — приложение для шлема (APK);
+#   linux   — программа для Linux, в неё вшиты драйвер и APK; плюс тесты установки;
+#   windows — программа для Windows с теми же драйвером и APK: установщик Inno Setup и переносной zip;
+#   release — на тег v<версия> (= appVersion в pc/core.go): релиз на GitHub со всеми файлами.
+#
+# Драйвер и APK собираются один раз и вшиваются в обе программы (PREBUILT_ASSETS=1 в pc/prepare_assets.sh).
+# Всё, кроме APK, собирается в контейнере Arch Linux — как у автора: программе нужны GTK 4.22 / libadwaita 1.9
+# (уровень GNOME 50), сборке под Windows — Wine, mingw-w64 и Python 3.14 (tarfile с zstd для пакетов MSYS2).
+#
+# Ключ подписи APK — секрет HEADSET_KEYSTORE_BASE64 (base64 от headset/debug.keystore: alias probe, пароль android).
+# Без него ключ генерируется заново при каждой сборке; программа это переживает (приложение на шлеме
+# с чужой подписью она переустанавливает), но с постоянным ключом обновления ставятся поверх.
+name: Сборка
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  driver:
+    name: Драйвер SteamVR (Linux + Windows)
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    steps:
+      - name: Пакеты
+        run: pacman -Syu --noconfirm --needed git clang lld cmake ninja python mingw-w64-gcc
+      - uses: actions/checkout@v7
+      - name: Тег совпадает с версией программы
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(sed -nE 's/^\s*appVersion\s*=\s*"([^"]+)".*/\1/p' pc/core.go)
+          if [[ $GITHUB_REF_NAME != "v$version" ]]; then
+              echo "::error::тег $GITHUB_REF_NAME, а appVersion в pc/core.go — $version"
+              exit 1
+          fi
+      - name: Сборка
+        run: driver/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: driver
+          path: driver/build/picotrackers
+          if-no-files-found: error
+
+  headset:
+    name: Приложение для шлема (APK)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ANDROID_BUILD_TOOLS: "37.0.0"
+      ANDROID_PLATFORM: android-37.0
+      ANDROID_NDK: 29.0.14206865
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+      - name: Android SDK
+        # SDK уже есть в образе раннера, доставляем закреплённые версии; build.sh берёт самые новые
+        # build-tools и platform, а NDK — из ANDROID_NDK_HOME (в образе он указывает на другую версию).
+        run: |
+          sdkmanager=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
+          (yes || true) | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" --install "build-tools;$ANDROID_BUILD_TOOLS" "platforms;$ANDROID_PLATFORM" "ndk;$ANDROID_NDK" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK" >> "$GITHUB_ENV"
+          command -v ninja || { sudo apt-get update -q && sudo apt-get install -yq ninja-build; }
+      - name: Ключ подписи
+        env:
+          KEYSTORE: ${{ secrets.HEADSET_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -n $KEYSTORE ]]; then
+              base64 -d <<< "$KEYSTORE" > headset/debug.keystore
+          else
+              echo "::warning::нет секрета HEADSET_KEYSTORE_BASE64 — APK подписан одноразовым ключом"
+          fi
+      - name: Сборка
+        run: headset/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: headset-apk
+          path: headset/build/PicoTrackers.apk
+          if-no-files-found: error
+
+  linux:
+    name: Программа для Linux
+    needs: [driver, headset]
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 60
+    steps:
+      - name: Пакеты
+        run: pacman -Syu --noconfirm --needed git go gtk4 libadwaita gobject-introspection
+      - uses: actions/checkout@v7
+      - &safe-directory
+        name: Git в контейнере
+        # Рабочая папка принадлежит другому пользователю — без этого go build не может прочитать версию из git.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - &driver-asset
+        uses: actions/download-artifact@v8
+        with:
+          name: driver
+          path: pc/assets/driver/picotrackers
+      - &apk-asset
+        uses: actions/download-artifact@v8
+        with:
+          name: headset-apk
+          path: pc/assets
+      - &go-version
+        id: go
+        name: Версия Go
+        run: echo "version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          # Скомпилированные биндинги GTK: без кэша сборка идёт ~10 мин.
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-linux-${{ steps.go.outputs.version }}-${{ hashFiles('pc/go.sum') }}
+      - name: Сборка
+        run: PREBUILT_ASSETS=1 pc/build.sh
+      - name: Тесты
+        working-directory: pc
+        run: go test ./...
+      - name: Требования к glibc
+        run: objdump -T pc/build/picotrackers | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: picotrackers-linux
+          path: pc/build/picotrackers
+          if-no-files-found: error
+
+  windows:
+    name: Программа для Windows (установщик)
+    needs: [driver, headset]
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 90
+    steps:
+      - name: Пакеты
+        run: |
+          pacman -Syu --noconfirm --needed git go mingw-w64-gcc python wine xorg-server-xvfb librsvg imagemagick zip
+      - uses: actions/checkout@v7
+      - *safe-directory
+      - *driver-asset
+      - *apk-asset
+      - *go-version
+      - uses: actions/cache@v6
+        with:
+          # Скомпилированные биндинги GTK для Windows: без кэша сборка идёт ~15 мин.
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-windows-${{ steps.go.outputs.version }}-${{ hashFiles('pc/go.sum') }}
+      - name: Сборка
+        # Xvfb — для Wine: установщик Inno Setup (ставится в префикс сборки) создаёт окна даже в тихом режиме.
+        run: PREBUILT_ASSETS=1 xvfb-run -a pc/build-windows.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: picotrackers-windows
+          path: |
+            pc/build/PICOtrackers-setup-*.exe
+            pc/build/PICOtrackers-windows.zip
+          if-no-files-found: error
+
+  release:
+    name: Релиз
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [headset, linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: picotrackers-linux
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: picotrackers-windows
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: headset-apk
+          path: dist
+      - name: Релиз на GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          mv picotrackers picotrackers-linux-x86_64
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+              --title "PICO Trackers ${GITHUB_REF_NAME#v}" *

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Значок PICO Trackers: человечек с трекерами (пояс, щиколотки). Вшит в программу (окно, меню приложений Linux); из него же build-windows.sh делает .ico и картинки установщика. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#62a0ea"/>
+      <stop offset="1" stop-color="#1a5fb4"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <g fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M128 98 V150"/>
+    <path d="M128 106 L88 148 M128 106 L168 148"/>
+    <path d="M128 150 L98 204 M128 150 L158 204"/>
+  </g>
+  <circle cx="128" cy="64" r="23" fill="#fff"/>
+  <g fill="#57e389" stroke="#0b3f8c" stroke-width="7">
+    <circle cx="128" cy="150" r="15"/>
+    <circle cx="96" cy="207" r="18"/>
+    <circle cx="160" cy="207" r="18"/>
+  </g>
+</svg>

@@ -1,0 +1,8 @@
+{
+  "driver_picotrackers": {
+    "enable": true,
+    "port": 7788,
+    "trackers": "waist,chest,left_foot,right_foot,left_knee,right_knee,left_elbow,right_elbow,left_shoulder,right_shoulder",
+    "headset_ip": ""
+  }
+}

@@ -1,0 +1,10 @@
+headset/build/
+headset/third_party/
+headset/debug.keystore
+driver/build/
+driver/third_party/
+pc/build/
+__pycache__/
+pc/assets/
+pc/third_party/
+pc/*.syso

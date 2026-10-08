@@ -1,0 +1,17 @@
+{
+  // Сборочные папки и скачанные зависимости: тысячи файлов (GTK для Windows, Wine-префикс, sysroot),
+  // Go-кода в них нет. Без этого gopls перечитывает проект после каждой сборки и грузит процессор.
+  "gopls": {
+    "build.directoryFilters": ["-**/build", "-**/third_party", "-pc/assets"]
+  },
+  "files.watcherExclude": {
+    "**/build/**": true,
+    "**/third_party/**": true,
+    "pc/assets/**": true
+  },
+  "search.exclude": {
+    "**/build": true,
+    "**/third_party": true
+  },
+  "cmake.sourceDirectory": "/mnt/data/PROJ/PICOtrackers/driver"
+}
