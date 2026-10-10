@@ -388,7 +388,9 @@ func (z *wizard) headsetStep() *adw.NavigationPage {
 				if !headset.OverWifi() {
 					target = switchToWifi(headset, cfg, z.w.logFromThread)
 				}
-				err = startService(target)
+				if !cfg.ServiceOff { // выключен кнопкой — не включаем
+					err = startService(target)
+				}
 			}
 			glib.IdleAdd(func() {
 				busy = false

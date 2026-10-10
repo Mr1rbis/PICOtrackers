@@ -123,8 +123,10 @@ chmod +x picotrackers-linux-x86_64
 Программу можно не держать открытой: драйвер запоминает её настройки (передавать ли трекинг, набор трекеров,
 частоту) и работает с ними и без неё, и после перезапуска SteamVR.
 
-Если сервис на шлеме выключен (кнопкой в приложении на шлеме, из меню программы или после переустановки
-приложения), программа это покажет и предложит «Включить сервис» — нужна связь со шлемом по adb.
+Сервис на шлеме включается и выключается одной кнопкой в строке «Шлем PICO» (или в меню) — надпись показывает,
+что он сейчас делает, даже когда SteamVR закрыт; нужна связь со шлемом по adb. Выключенный кнопкой сервис так и
+остаётся выключенным — программа и сам шлем (при включении, при открытии приложения) не запускают его, пока его
+не включат снова: кнопкой в программе или «Авто» в приложении на шлеме.
 
 **Обновление.** При каждом запуске программа проверяет, нет ли на GitHub версии новее. Если есть — откроется окно
 «Доступна версия …». Обновление скачивается и ставится, только когда **SteamVR закрыт** и **шлем подключён
@@ -137,7 +139,7 @@ chmod +x picotrackers-linux-x86_64
 **Удаление.** Linux: Настройки → «Удалить программу» (или `picotrackers uninstall`). Windows: «Параметры →
 Приложения» — деинсталлятор снимает драйвер с регистрации в SteamVR и удаляет данные программы.
 
-Команды: `picotrackers setup` (установка без мастера), `picotrackers stop` (выключить сервис на шлеме),
+Команды: `picotrackers setup` (установка без мастера), `picotrackers stop` (выключить сервис на шлеме, как кнопкой — запоминается),
 `picotrackers install-driver` / `picotrackers uninstall` (их вызывает установщик Windows).
 
 ### Если не работает
@@ -318,8 +320,10 @@ The app window:
 You don't have to keep the app open: the driver remembers its settings (whether to send tracking, the tracker
 selection, the rate) and keeps using them without the app and after a SteamVR restart.
 
-If the service on the headset is off (stopped from the headset app, from the app menu, or after reinstalling the
-headset app), the app shows it and offers "Enable service" — this needs an adb connection to the headset.
+The headset service is turned on and off with a single button in the "PICO headset" row (or in the menu); its label
+shows the current state even when SteamVR is closed. This needs an adb connection to the headset. A service you
+turned off stays off: neither the app nor the headset itself (on boot or when the headset app is opened) starts it
+again until you turn it back on, with the app button or "Auto" in the headset app.
 
 **Updates.** Every time it starts, the app checks GitHub for a newer version. If there is one, an "Update
 available" window opens. The update is only downloaded and installed when **SteamVR is closed** and **the
@@ -334,7 +338,7 @@ this way; update from 1.3 by hand.
 uninstaller unregisters the driver from SteamVR and removes the app's data.
 
 Commands: `picotrackers setup` (install without the wizard), `picotrackers stop` (stop the service on the
-headset), `picotrackers install-driver` / `picotrackers uninstall` (used by the Windows installer).
+headset, like the button: it stays off), `picotrackers install-driver` / `picotrackers uninstall` (used by the Windows installer).
 
 ### Troubleshooting
 

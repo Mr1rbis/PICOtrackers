@@ -85,6 +85,9 @@ type window struct {
 	heroDot, heroTitle, heroText *gtk.Label
 	heroButton, steamVRButton    *gtk.Button
 	serviceButton                *gtk.Button
+	menu                         *gio.Menu
+	serviceMenuLabel             string
+	serviceAction                *gio.SimpleAction
 	headsetRow, steamVRRow       *adw.ActionRow
 	calibrationRow               *adw.ActionRow
 	headsetDot, steamVRDot       *gtk.Label
@@ -105,7 +108,7 @@ type window struct {
 }
 
 func newWindow(app *adw.Application) *window {
-	w := &window{app: app, controls: map[string]trackerControl{}}
+	w := &window{app: app, controls: map[string]trackerControl{}, serviceMenuLabel: serviceMenuUnknown}
 	w.win = adw.NewApplicationWindow(&app.Application)
 	w.win.SetTitle("PICO Trackers")
 	w.win.SetDefaultSize(640, 940)
@@ -118,9 +121,9 @@ func newWindow(app *adw.Application) *window {
 	header.SetTitleWidget(switcher)
 	menu := gio.NewMenu()
 	menu.Append("Мастер установки", "app.wizard")
-	menu.Append("Включить сервис на шлеме", "app.start-service")
-	menu.Append("Выключить сервис на шлеме", "app.stop-service")
+	menu.Append(w.serviceMenuLabel, "app.toggle-service") // надпись меняет refreshService
 	menu.Append("О программе", "app.about")
+	w.menu = menu
 	menuButton := gtk.NewMenuButton()
 	menuButton.SetIconName("open-menu-symbolic")
 	menuButton.SetMenuModel(menu)
@@ -267,7 +270,7 @@ func (w *window) buildConnection() *adw.PreferencesGroup {
 	w.headsetRow, w.headsetDot = statusRow(group, "Шлем PICO")
 	w.serviceButton = gtk.NewButtonWithLabel("Включить сервис")
 	w.serviceButton.SetVAlign(gtk.AlignCenter)
-	w.serviceButton.ConnectClicked(w.c.StartService)
+	w.serviceButton.ConnectClicked(w.c.ToggleService)
 	w.serviceButton.SetVisible(false)
 	w.headsetRow.AddSuffix(w.serviceButton)
 	w.steamVRRow, w.steamVRDot = statusRow(group, "SteamVR")
@@ -467,15 +470,20 @@ func (w *window) buildLog() *adw.PreferencesGroup {
 
 func (w *window) addActions() {
 	for name, callback := range map[string]func(){
-		"wizard":        w.openWizard,
-		"start-service": w.c.StartService,
-		"stop-service":  w.c.StopService,
-		"about":         w.showAbout,
+		"wizard":         w.openWizard,
+		"toggle-service": w.c.ToggleService,
+		"start-service":  w.c.StartService, // без пункта меню — для D-Bus (org.gtk.Actions.Activate)
+		"stop-service":   w.c.StopService,
+		"about":          w.showAbout,
 	} {
 		action := gio.NewSimpleAction(name, nil)
 		callback := callback
 		action.ConnectActivate(func(*glib.Variant) { callback() })
 		w.app.AddAction(action)
+		if name == "toggle-service" {
+			w.serviceAction = action
+			action.SetEnabled(false) // до первой проверки сервиса
+		}
 	}
 }
 
@@ -609,7 +617,39 @@ func (w *window) refreshHeadset(s Snapshot) {
 	}
 	w.headsetRow.SetSubtitle(strings.Join(parts, " · "))
 	setDot(w.headsetDot, state)
-	w.serviceButton.SetVisible(s.ServiceKnown && !s.ServiceRunning)
+	w.refreshService(s)
+}
+
+const serviceMenuUnknown = "Сервис на шлеме — нет связи по adb"
+
+// refreshService — одна кнопка (строка «Шлем PICO») и один пункт меню на включение и выключение сервиса;
+// надпись — по его состоянию на шлеме (adb), независимо от SteamVR.
+func (w *window) refreshService(s Snapshot) {
+	label, menuLabel := "Включить сервис", "Включить сервис на шлеме"
+	switch {
+	case !s.ServiceKnown:
+		menuLabel = serviceMenuUnknown
+	case s.ServiceChange == "start":
+		label, menuLabel = "Включаю…", "Сервис на шлеме включается…"
+	case s.ServiceChange == "stop":
+		label, menuLabel = "Выключаю…", "Сервис на шлеме выключается…"
+	case s.ServiceRunning:
+		label, menuLabel = "Выключить сервис", "Выключить сервис на шлеме"
+	}
+	w.serviceButton.SetLabel(label)
+	w.serviceButton.SetVisible(s.ServiceKnown)
+	w.serviceButton.SetSensitive(s.ServiceChange == "")
+	if s.ServiceRunning {
+		w.serviceButton.RemoveCSSClass("suggested-action")
+	} else {
+		w.serviceButton.AddCSSClass("suggested-action")
+	}
+	w.serviceAction.SetEnabled(s.ServiceKnown && s.ServiceChange == "")
+	if menuLabel != w.serviceMenuLabel {
+		w.serviceMenuLabel = menuLabel
+		w.menu.Remove(1)
+		w.menu.Insert(1, menuLabel, "app.toggle-service")
+	}
 }
 
 func (w *window) refreshSteamVR(s Snapshot) {
@@ -707,6 +747,9 @@ func (w *window) refreshHero(s Snapshot) {
 		w.heroAction = w.openWizard
 	case s.ServiceKnown && !s.ServiceRunning:
 		title, text, state = "Сервис на шлеме выключен", "Без него шлем не передаёт трекинг", "warning"
+		if s.ServiceOff {
+			text = "Выключен вами: сам он не включится, пока не нажмёте кнопку"
+		}
 		w.heroButton.SetLabel("Включить сервис")
 		w.heroAction = w.c.StartService
 	case !s.SteamVRRunning:

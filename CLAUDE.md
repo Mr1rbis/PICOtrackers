@@ -96,6 +96,12 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
     Проверено: драйвер — поддельным vrserver (scratchpad `drvtest/host.cpp` + `scenario.py`, 19 проверок, в
     `unshare -rn`), программа — во вложенном KWin с поддельным adb и поддельным состоянием драйвера (скриншоты).
     На реальном шлеме и в SteamVR не проверено.
+11. ✅ Версия 1.6 (2026-10-11, по просьбе пользователя): **одна кнопка «Включить/Выключить сервис»** (строка шлема +
+    один пункт меню, надпись по состоянию по adb, без SteamVR) и **выбор «выключен» запоминается**: в программе
+    (`service_off` в config.json — при подключении к шлему сервис не запускается) и на шлеме (SharedPreferences
+    `service/disabled` — BootReceiver и открытие приложения его не запускают). Проверено во вложенном KWin с
+    поддельным adb, изображающим приложение 1.6 (6 шагов: автозапуск → выкл → перезапуск без автозапуска → вкл →
+    автозапуск → выключен на самом шлеме). Java-часть на реальном шлеме не проверена.
 
 ## Железо и окружение
 
@@ -109,7 +115,7 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   `libAlgSwiftBodyPose*.so` (Swift = Motion Trackers). Приложение трекеров — `com.pvr.swift` («Motion Tracker» 2.0.4).
 - Сопряжены 2 трекера (`mBindTrackerCount 2`). Свойства: `persist.pxr.tracking.swiftVersion=2`,
   `ro.pxr.support.swiftversion=3`, `debug.pxr.tracking.swift_body_tracking_mode=0`.
-- Установлено: PICO Trackers `dev.picotrackers.headset` v1.2 (в репозитории уже 1.5; пробник `dev.picotrackers.probe` удалён), Steam Link `com.valvesoftware.steamlinkvr` 2.0.22 (активности `com.valvesoftware.steamlink.SteamLink`
+- Установлено: PICO Trackers `dev.picotrackers.headset` v1.2 (в репозитории уже 1.6; пробник `dev.picotrackers.probe` удалён), Steam Link `com.valvesoftware.steamlinkvr` 2.0.22 (активности `com.valvesoftware.steamlink.SteamLink`
   — меню, `.VRLink` — стрим), ALVR `alvr.client.stable` 20.14.1 и `alvr.client.dev` (nightly 2026.06.06),
   Virtual Desktop 1.34.22, VRChat, Connect (`com.picovr.picostreamassistant`).
 - Шлем засыпает, когда снят (датчик приближения): `dumpsys power` → `mWakefulness=Asleep`, `Display Power: state=OFF`.
@@ -154,6 +160,16 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   --launch-immediately` и `/usr/lib/at-spi2-registryd`, программу без `NO_AT_BRIDGE`, Python `gi` Atspi →
   `get_action_iface().do_action(0)`. GTK 4.22 иногда падает (SIGABRT, `gtk_at_spi_root_to_ref` assertion), если
   AT-SPI-клиент обходит дерево сразу после закрытия диалога — артефакт теста, не программы.
+- Если запущена программа пользователя (занят UDP 7790), тестовую копию запускать в своём сетевом пространстве:
+  `unshare --user --map-current-user --net …` (с `--map-current-user` uid прежний — D-Bus принимает EXTERNAL-авторизацию;
+  `ip link set lo up` там запрещён, но привязка к 127.0.0.1 работает). Всплывающее меню GTK под Xwayland — отдельное
+  окно X: искать `xdotool search --onlyvisible --name ''` по размеру и снимать `import -window <id>`.
+- **SteamVR на этом ПК** (2026-10-11): vrcompositor падает (SIGSEGV, вызов по нулевому указателю в главном потоке,
+  стек vrcompositor/vrclient.so/libX11/SDL3) почти при каждом закрытии SteamVR с 2026-10-01 — и без нашего драйвера
+  (он в компоновщик не грузится). Ошибка **303** «Основной компонент SteamVR работает со сбоями» = vrmonitor не получил
+  интерфейс компоновщика: тот стартовал 5 с, а шлем Steam Link был уже подключён и VR_Init прошёл сразу (гонка).
+  Дампы — /tmp/dumps/crash_*.dmp (разбор: scratchpad `minidump.py` — модули, RIP, адреса со стека). Пользователь
+  тогда выключил драйвер в «Управлении надстройками» (`driver_picotrackers.enable=false` в steamvr.vrsettings).
 - `pkill -f <шаблон>` / `pgrep -f` совпадают и с командной строкой своей же оболочки (zsh -c '…шаблон…') — убивают её
   (код 144). Писать шаблон как `[u]pdtest/…`. Поддельный «SteamVR» для проверок (копия sleep с именем vrserver)
   убивать по PID, **не** `pkill -x vrserver` — так можно закрыть настоящий SteamVR пользователя.
@@ -227,7 +243,7 @@ CLAUDE.md, README.md (для людей на GitHub: русский + англи
 .github/workflows/build.yml   CI (GitHub Actions): driver ‖ headset → linux ‖ windows → release (на тег v<appVersion>)
 common/protocol.h              UDP-протокол: Packet (PTB1, шлем→драйвер), ControlPacket (PTC1, драйвер→шлем),
                                порты 7788/7789/7790, флаги, индексы суставов (= XrBodyJointBD)
-headset/                       приложение для шлема, пакет dev.picotrackers.headset v1.5, «PICO Trackers»
+headset/                       приложение для шлема, пакет dev.picotrackers.headset v1.6, «PICO Trackers»
   AndroidManifest.xml          2D-приложение (без pvr.app.type=vr); TrackingService exported с permission
                                DUMP (запускать может только adb shell и само приложение); BootReceiver
   build.sh / fetch_deps.sh     сборка без Gradle → build/PicoTrackers.apk; loader PICO + заголовки Khronos (sha256)
@@ -236,7 +252,7 @@ headset/                       приложение для шлема, паке�
   cpp/tracking.cpp             loader, instance, headless-сессия, трекер тела, цикл 100 Гц, UDP, JNI (start/stop/running/status)
   src/…/TrackingService.java   постоянный foreground-сервис: слушатель UDP 7789, автостарт/стоп трекинга, WifiLock+MulticastLock
   src/…/BootReceiver.java      запуск сервиса после загрузки шлема
-  src/…/MainActivity.java      окно: статус, «Передавать вручную» (отладка), «Авто», «Выключить»
+  src/…/MainActivity.java      окно: статус, «Передавать вручную» (отладка), «Авто» (включить), «Выключить» (запоминается)
 driver/                        драйвер SteamVR «picotrackers» (C++17, Linux и Windows)
   build.sh / fetch_deps.sh     CMake+Ninja → build/picotrackers/; openvr_driver.h v2.15.6 (sha256)
   fetch_sysroot.py             sysroot Debian 11 (libc6, libc6-dev, linux-libc-dev, libgcc-s1, libgcc-10-dev,
@@ -312,6 +328,11 @@ tools/udp_listen.py            отладка (Python): показывает п�
   пакет состояния раз в 200 мс (`stats sent=` считает только скелеты). Если рантайм ни разу не ответил на запрос
   состояния — считаем трекеры подключёнными (иначе трекинг не пошёл бы вовсе; лог «tracker state unavailable»).
 - `onDestroy` сервиса пишет `listener: service stopped` — по ней программа сразу видит выключенный сервис.
+- **Выбор «выключен»** (1.6): интент с `enabled` (boolean extra; `am start-foreground-service … --ez enabled false|true`)
+  — выбор пользователя, сохраняется в SharedPreferences `service`/`disabled` (commit) и пишется в лог `listener:
+  service enabled|disabled by user`. Выключен → `onStartCommand` делает `stopSelf()` и `START_NOT_STICKY` для любого
+  запуска без `enabled=true` (BootReceiver его и не шлёт, MainActivity при открытии не стартует сервис). Кнопки
+  в приложении: «Авто» = enabled true, «Выключить» = enabled false, «Передавать вручную» тоже включает.
   Ошибка/потеря сессии → повтор через 2 с. Поток nice −10.
 - Global ref на контекст — **один на процесс** (loader запоминает его при первом `xrInitializeLoaderKHR`;
   пересоздание роняло процесс «JNI ERROR: accessed deleted Global» — исправлено).
@@ -410,13 +431,23 @@ tools/udp_listen.py            отладка (Python): показывает п�
   проверка APK; если стоит — `am start-foreground-service` без host (авторежим) → LogcatFollower. Ничего не ставит.
   Дальше, пока шлем на связи, раз в 5 с `serviceRunning` (`dumpsys activity services <пакет>/.TrackingService`:
   есть `ServiceRecord{…TrackingService}` или «(nothing)»); строки лога `listener: waiting…` / `listener: service
-  stopped` меняют состояние сразу. Выключенный сервис программа сама не включает (только при подключении к шлему,
-  как раньше) — карточка «Сервис на шлеме выключен» и кнопки «Включить сервис» (`StartService`; меню —
-  `app.start-service` / `app.stop-service`, их можно вызвать и через D-Bus `org.gtk.Actions.Activate`).
+  stopped` меняют состояние сразу. Выключенный сервис программа сама не включает — карточка «Сервис на шлеме
+  выключен» с «Включить сервис». При подключении к шлему (`tryConnect`, мастер, `picotrackers setup`) сервис
+  запускается обычным `startService` (без extra — приложение 1.6 его не запустит, если выключили на шлеме), но
+  **не запускается вовсе, если `cfg.ServiceOff`** (кнопкой «Выключить сервис» или `picotrackers stop`). Кнопки —
+  `setServiceEnabled(h, on)`: `--ez enabled on` + `ServiceOff = !on`; при выключении ждёт до 2 с, пока сервис
+  остановится сам, иначе (приложение до 1.6 extra не знает) — `am stopservice`. Карточка при `ServiceOff`:
+  «Выключен вами: сам он не включится, пока не нажмёте кнопку». Включение и выключение — **одна кнопка**
+  в строке «Шлем PICO» и **один пункт меню** (`app.toggle-service` → `ToggleService`): надпись по состоянию сервиса
+  по adb, от SteamVR не зависит — «Выключить сервис» / «Включить сервис» (выделена), на время операции «Включаю…» /
+  «Выключаю…» и неактивна (`Snapshot.ServiceChange`); нет связи по adb — кнопки нет, пункт меню неактивен. Надпись
+  пункта меню меняется через `gio.Menu` Remove/Insert (позиция 1). Действия `app.start-service` / `app.stop-service`
+  остались без пунктов меню — для D-Bus `org.gtk.Actions.Activate`.
 - APK собирается воспроизводимо (фиксированное время файлов, `zip -X`) — иначе хеш менялся бы при каждой сборке.
 - `installApp`: если `adb install -r` отвечает `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (на шлеме APK с другой подписью —
   локальная сборка против релиза из CI), приложение удаляется (`adb uninstall`) и ставится заново. На шлеме не проверено.
-- Конфиг: `adb_wifi`, `tracking`, `trackers` (если нет — берётся из первого состояния драйвера), `rate`, `wizard_done`.
+- Конфиг: `adb_wifi`, `tracking`, `trackers` (если нет — берётся из первого состояния драйвера), `rate`, `wizard_done`,
+  `service_off` (сервис на шлеме выключен кнопкой).
 - Окно — вкладки (Adw.ViewStack + ViewSwitcher в заголовке):
   - «Трекеры»: карточка общего состояния, «Шлем / SteamVR / Калибровка», «Передавать трекинг», «Частота
     передачи» (Adw.SpinRow), схема «человечек» (`body.go`: фигура со спины в центре, 10 трекеров с

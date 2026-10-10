@@ -31,7 +31,7 @@ const (
 	adbWifiPort    = 5555
 	steamVRAppID   = 250820
 	driverName     = "picotrackers"
-	appVersion     = "1.5"
+	appVersion     = "1.6"
 	githubRepo     = "Mr1rbis/PICOtrackers" // релизы: обновление программы (update.go)
 )
 
@@ -99,6 +99,7 @@ type Config struct {
 	Trackers   *[]string `json:"trackers,omitempty"` // nil — ещё не известен, берём у драйвера
 	Rate       int       `json:"rate,omitempty"`     // снимков/с со шлема; 0 — по умолчанию
 	WizardDone bool      `json:"wizard_done,omitempty"`
+	ServiceOff bool      `json:"service_off,omitempty"` // сервис на шлеме выключен кнопкой — сами его не включаем
 }
 
 const (
@@ -388,6 +389,7 @@ func installAPK(h *Headset, data []byte, log logFunc) error {
 }
 
 // startService запускает сервис в авторежиме: он ждёт просьбу драйвера SteamVR и сам включает трекинг.
+// Если сервис выключили кнопкой на шлеме, приложение (1.6+) не запустится — выбор пользователя важнее.
 func startService(h *Headset) error {
 	_, err := h.Shell("am start-foreground-service -n " + headsetService)
 	return err
@@ -395,6 +397,26 @@ func startService(h *Headset) error {
 
 func stopService(h *Headset) {
 	h.Shell("am stopservice -n " + headsetService) // am возвращает 255 даже при успехе
+}
+
+// setServiceEnabled — выбор пользователя «сервис включён/выключен» (кнопка в программе, picotrackers stop).
+// Приложение на шлеме (1.6+) его запоминает: выключенный сервис не запускается сам ни при включении шлема,
+// ни при открытии приложения. Старое приложение «enabled» не знает — его сервис останавливаем как раньше.
+func setServiceEnabled(h *Headset, enabled bool) error {
+	if _, err := h.Shell(fmt.Sprintf("am start-foreground-service -n %s --ez enabled %t", headsetService, enabled)); err != nil {
+		return err
+	}
+	if enabled {
+		return nil
+	}
+	for i := 0; i < 10; i++ { // новое приложение останавливается само; старое — нет
+		time.Sleep(200 * time.Millisecond)
+		if running, err := serviceRunning(h); err == nil && !running {
+			return nil
+		}
+	}
+	stopService(h)
+	return nil
 }
 
 // serviceRunning — запущен ли сервис на шлеме: dumpsys выводит «ServiceRecord{… <пакет>/.TrackingService}»,

@@ -134,6 +134,10 @@ func cliSetup() error {
 	if !headset.OverWifi() {
 		headset = switchToWifi(headset, cfg, cliLog)
 	}
+	if cfg.ServiceOff {
+		fmt.Println("! сервис на шлеме выключен вами — включите его кнопкой «Включить сервис» в программе")
+		return nil
+	}
 	if err := startService(headset); err != nil {
 		return err
 	}
@@ -141,12 +145,18 @@ func cliSetup() error {
 	return nil
 }
 
+// cliStop — как кнопка «Выключить сервис»: выбор запоминается и в программе, и на шлеме.
 func cliStop() error {
-	headset, err := connectHeadset(loadConfig())
+	cfg := loadConfig()
+	headset, err := connectHeadset(cfg)
 	if err != nil {
 		return err
 	}
-	stopService(headset)
-	cliLog("сервис на шлеме выключен")
+	if err := setServiceEnabled(headset, false); err != nil {
+		return err
+	}
+	cfg.ServiceOff = true
+	cfg.save()
+	cliLog("сервис на шлеме выключен — сам он не включится, пока не нажмёте «Включить сервис» в программе")
 	return nil
 }

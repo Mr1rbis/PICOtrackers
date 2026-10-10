@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.net.wifi.WifiManager;
 import android.os.IBinder;
@@ -23,17 +24,22 @@ import java.nio.ByteOrder;
  * common/protocol.h) и, пока просьбы идут, передаёт трекинг на адрес отправителя.
  * Запускается при включении шлема (BootReceiver), при открытии приложения или с ПК через adb.
  * Интент с EXTRA_HOST включает трекинг вручную (для отладки без SteamVR), интент без него — авторежим.
+ * EXTRA_ENABLED — выбор пользователя (кнопка на шлеме или в программе на ПК): false — выключить сервис и не
+ * запускать его самому (при включении шлема, открытии приложения), пока не включат снова (true).
  */
 public class TrackingService extends Service {
     static final String TAG = "PicoTrackers";
     static final String EXTRA_HOST = "host";
     static final String EXTRA_PORT = "port";
+    static final String EXTRA_ENABLED = "enabled";
     static final int DEFAULT_PORT = 7788;
     static final int CONTROL_PORT = 7789;
     private static final long HELLO_TIMEOUT_MS = 5000;
     private static final int COMMAND_HELLO = 1;
     private static final int COMMAND_BYE = 2;
     private static final String CHANNEL = "tracking";
+    private static final String PREFS = "service";
+    private static final String PREF_DISABLED = "disabled";
 
     private static volatile String state = "сервис не запущен";
 
@@ -51,6 +57,15 @@ public class TrackingService extends Service {
     /** Состояние для окна приложения. */
     static String state() {
         return state;
+    }
+
+    /** Пользователь выключил сервис: сам он не запускается, пока его не включат. */
+    static boolean disabled(Context context) {
+        return context.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_DISABLED, false);
+    }
+
+    private void setDisabled(boolean disabled) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_DISABLED, disabled).commit();
     }
 
     @Override
@@ -77,6 +92,15 @@ public class TrackingService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && intent.hasExtra(EXTRA_ENABLED)) {
+            boolean enabled = intent.getBooleanExtra(EXTRA_ENABLED, true);
+            setDisabled(!enabled);
+            Log.i(TAG, "listener: service " + (enabled ? "enabled" : "disabled") + " by user");
+        }
+        if (disabled(this)) {
+            stopSelf();  // в том числе перезапуск системой (START_STICKY, intent == null)
+            return START_NOT_STICKY;
+        }
         String host = intent != null ? intent.getStringExtra(EXTRA_HOST) : null;
         synchronized (this) {
             if (host != null && !host.isEmpty()) {
@@ -104,6 +128,7 @@ public class TrackingService extends Service {
         }
         wifiLock.release();
         multicastLock.release();
+        state = "Сервис остановлен";
         Log.i(TAG, "listener: service stopped");  // по этой строке программа на ПК видит, что сервис выключен
         super.onDestroy();
     }
