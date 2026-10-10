@@ -54,6 +54,8 @@ type Snapshot struct {
 	HeadsetWifi    bool
 	HeadsetError   string
 	AdbConnected   bool
+	ServiceKnown   bool // состояние сервиса на шлеме проверено (шлем на связи по adb)
+	ServiceRunning bool
 	Listener       string
 	Stats          map[string]string // nil — нет свежей статистики
 	Driver         *DriverStatus     // nil — драйвер не на связи
@@ -86,6 +88,8 @@ type Controller struct {
 	headset        *Headset
 	headsetError   string
 	adbConnected   bool
+	serviceKnown   bool
+	serviceRunning bool
 	follower       *LogcatFollower
 	listener       string
 	stats          map[string]string
@@ -116,6 +120,7 @@ func (c *Controller) Snapshot() Snapshot {
 	s := Snapshot{
 		DriverState: c.driverState, RestartSteamVR: c.restartSteamVR, AppState: c.appState, AppKnown: c.appKnown,
 		HeadsetError: c.headsetError, AdbConnected: c.adbConnected, Listener: c.listener,
+		ServiceKnown: c.serviceKnown, ServiceRunning: c.serviceRunning,
 		SteamVRRunning: c.steamVRRunning, Tracking: c.cfg.trackingEnabled(), Rate: c.cfg.rate(),
 	}
 	if c.headset != nil {
@@ -277,9 +282,13 @@ func (c *Controller) Reconnect() {
 		c.follower.Stop()
 		c.follower = nil
 	}
-	c.headset, c.appKnown = nil, false
+	c.headset, c.appKnown, c.serviceKnown = nil, false, false
 	c.cfg = loadConfig()
 	c.mu.Unlock()
+	c.wakeUp()
+}
+
+func (c *Controller) wakeUp() {
 	select {
 	case c.wake <- struct{}{}:
 	default:
@@ -287,14 +296,17 @@ func (c *Controller) Reconnect() {
 }
 
 // connectLoop держит связь со шлемом по adb, ничего не устанавливая: сохранённый Wi-Fi адрес или USB.
-// Если приложение уже стоит — запускает сервис (авторежим) и следит за его логом.
+// Если приложение уже стоит — запускает сервис (авторежим) и следит за его логом; потом раз в 5 с
+// проверяет, не выключили ли сервис (на шлеме, из меню программы, после переустановки приложения).
 func (c *Controller) connectLoop() {
 	for {
 		c.mu.Lock()
-		connected, cfg := c.follower != nil, c.cfg
+		connected, cfg, headset := c.follower != nil, c.cfg, c.headset
 		c.mu.Unlock()
 		if !connected {
 			c.tryConnect(cfg)
+		} else {
+			c.checkService(headset)
 		}
 		select {
 		case <-c.closing:
@@ -329,6 +341,7 @@ func (c *Controller) tryConnect(cfg *Config) {
 		c.onLog("не удалось запустить сервис на шлеме: " + err.Error())
 		return
 	}
+	c.setService(true)
 	follower := &LogcatFollower{
 		headset:      headset,
 		OnStats:      c.onStats,
@@ -354,6 +367,37 @@ func (c *Controller) onListener(text string) {
 	c.listener = text
 	c.mu.Unlock()
 	c.onLog("шлем: " + text)
+	switch {
+	case strings.HasPrefix(text, "waiting"): // сервис только что запустился
+		c.setService(true)
+	case text == "service stopped":
+		c.setService(false)
+	}
+}
+
+// checkService — запущен ли сервис на шлеме (ошибка adb — состояние неизвестно).
+func (c *Controller) checkService(headset *Headset) {
+	if headset == nil {
+		return
+	}
+	running, err := serviceRunning(headset)
+	if err != nil {
+		c.mu.Lock()
+		c.serviceKnown = false
+		c.mu.Unlock()
+		return
+	}
+	c.setService(running)
+}
+
+func (c *Controller) setService(running bool) {
+	c.mu.Lock()
+	changed := !c.serviceKnown || running != c.serviceRunning
+	c.serviceKnown, c.serviceRunning = true, running
+	c.mu.Unlock()
+	if changed && !running {
+		c.onLog("сервис на шлеме выключен — без него трекинг не передаётся; включить: кнопка «Включить сервис»")
+	}
 }
 
 func (c *Controller) onAdb(connected bool) {
@@ -372,10 +416,34 @@ func (c *Controller) StopService() {
 	c.mu.Lock()
 	headset := c.headset
 	c.mu.Unlock()
-	if headset != nil {
-		go stopService(headset)
-		c.onLog("сервис на шлеме выключен — автозапуск трекинга не работает до следующего запуска программы")
+	if headset == nil {
+		c.onToast("Шлем не на связи по adb")
+		return
 	}
+	go func() {
+		stopService(headset)
+		c.checkService(headset)
+	}()
+}
+
+// StartService включает сервис на шлеме (авторежим: трекинг пойдёт, когда SteamVR попросит данные).
+func (c *Controller) StartService() {
+	c.mu.Lock()
+	headset := c.headset
+	c.mu.Unlock()
+	if headset == nil {
+		c.onToast("Шлем не на связи по adb")
+		return
+	}
+	go func() {
+		if err := startService(headset); err != nil {
+			c.onLog("не удалось запустить сервис на шлеме: " + err.Error())
+			c.onToast("Не удалось включить сервис на шлеме")
+			return
+		}
+		c.setService(true) // dumpsys видит сервис не сразу; следующая проверка (через 5 с) уточнит
+		c.onLog("сервис на шлеме включён")
+	}()
 }
 
 func (c *Controller) Close() {

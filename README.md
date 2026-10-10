@@ -109,6 +109,10 @@ chmod +x picotrackers-linux-x86_64
 
 Шлем должен быть **надет**: снятый шлем засыпает, и трекинга нет.
 
+Трекеры PICO должны быть **подключены к шлему**. Пока их нет, шлем не передаёт скелет (без трекеров PICO
+достраивает ноги сам, и они были бы выдуманными), а в SteamVR трекеры показываются отключёнными. В программе
+это видно как «Трекеры не подключены».
+
 Окно программы:
 - **Трекеры** — состояние шлема, SteamVR и калибровки; «Передавать трекинг»; частота передачи
   (10–250 раз/с); схема-человечек с переключателями трекеров; наборы «Ноги / Основные / Все» и ещё
@@ -116,7 +120,11 @@ chmod +x picotrackers-linux-x86_64
 - **3D-вид** — скелет в реальном времени: мышью — облёт, колесом — масштаб.
 - **Настройки** — автозапуск при входе в систему, мастер установки, удаление, журнал.
 
-Программу можно не держать открытой: драйвер работает и без неё, с последним выбранным набором трекеров.
+Программу можно не держать открытой: драйвер запоминает её настройки (передавать ли трекинг, набор трекеров,
+частоту) и работает с ними и без неё, и после перезапуска SteamVR.
+
+Если сервис на шлеме выключен (кнопкой в приложении на шлеме, из меню программы или после переустановки
+приложения), программа это покажет и предложит «Включить сервис» — нужна связь со шлемом по adb.
 
 **Обновление.** При каждом запуске программа проверяет, нет ли на GitHub версии новее. Если есть — откроется окно
 «Доступна версия …». Обновление скачивается и ставится, только когда **SteamVR закрыт** и **шлем подключён
@@ -137,6 +145,7 @@ chmod +x picotrackers-linux-x86_64
 - Журнал событий — внизу окна программы.
 - Лог драйвера: `~/.local/share/Steam/logs/vrserver.txt` (Windows: `Steam\logs\vrserver.txt`), строки `picotrackers:`.
 - Лог шлема: `adb logcat -s PicoTrackers`.
+- «Сервис на шлеме выключен» — кнопка «Включить сервис» (или меню → «Включить сервис на шлеме»).
 - Шлем не начинает передавать — сеть может резать broadcast (изоляция клиентов в Wi-Fi). Тогда укажите IP шлема
   в настройках SteamVR: `steamvr.vrsettings`, секция `driver_picotrackers`, ключ `headset_ip`.
 - `tools/udp_listen.py` — показать приходящие со шлема суставы (при выключенном SteamVR: порт общий).
@@ -295,6 +304,10 @@ skeleton with the headset pose in SteamVR) happens by itself within the first fe
 
 You need to be **wearing** the headset: when it's off your head it goes to sleep and there's no tracking.
 
+The PICO trackers have to be **connected to the headset**. Until they are, the headset doesn't send the skeleton
+(without trackers PICO makes the legs up by itself) and the trackers show up as disconnected in SteamVR. The app
+shows this as "Trackers not connected".
+
 The app window:
 - **Trackers**: headset, SteamVR and calibration status; "Send tracking"; send rate (10–250 per second);
   a body diagram with tracker toggles; "Legs / Main / All" presets and 14 extra joints. Changes show up in
@@ -302,7 +315,11 @@ The app window:
 - **3D view**: live skeleton; drag to orbit, scroll to zoom.
 - **Settings**: start on login, setup wizard, uninstall, event log.
 
-You don't have to keep the app open: the driver works without it, with the last tracker selection.
+You don't have to keep the app open: the driver remembers its settings (whether to send tracking, the tracker
+selection, the rate) and keeps using them without the app and after a SteamVR restart.
+
+If the service on the headset is off (stopped from the headset app, from the app menu, or after reinstalling the
+headset app), the app shows it and offers "Enable service" — this needs an adb connection to the headset.
 
 **Updates.** Every time it starts, the app checks GitHub for a newer version. If there is one, an "Update
 available" window opens. The update is only downloaded and installed when **SteamVR is closed** and **the
@@ -324,6 +341,7 @@ headset), `picotrackers install-driver` / `picotrackers uninstall` (used by the 
 - Event log: at the bottom of the app window.
 - Driver log: `~/.local/share/Steam/logs/vrserver.txt` (Windows: `Steam\logs\vrserver.txt`), lines starting with `picotrackers:`.
 - Headset log: `adb logcat -s PicoTrackers`.
+- "Service on the headset is off": click "Enable service" (or menu → "Enable service on the headset").
 - The headset never starts sending: your network may be dropping broadcasts (Wi-Fi client isolation). Put the
   headset's IP into the SteamVR settings: `steamvr.vrsettings`, section `driver_picotrackers`, key `headset_ip`.
 - `tools/udp_listen.py` prints the joints coming from the headset (with SteamVR closed, since it's the same port).

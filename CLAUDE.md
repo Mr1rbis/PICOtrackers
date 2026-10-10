@@ -86,6 +86,16 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
    отказ при чужой контрольной сумме, папка без прав записи, нет сети → мастер. Установщик в режиме `/UPDATE` —
    под Wine (драйвер переустановлен, программа запущена с `--updated`). PowerShell-ожидание на Windows и обновление
    с реальным шлемом не проверены. Версия 1.3 обновляться не умеет — с неё только вручную.
+10. ✅ Версия 1.5 (2026-10-10, по просьбе пользователя; 1.4 уже выпущена с тегом v1.4):
+    - **Драйвер хранит настройки программы**: кроме `trackers` и `rate` теперь и `tracking`; программа отключилась —
+      драйвер работает с её последними настройками (раньше сбрасывал трекинг на «вкл»), после перезапуска SteamVR тоже.
+    - **Без подключённых трекеров PICO данные не идут**: шлем не шлёт скелет (только пакет состояния без суставов,
+      5 раз/с), драйвер не добавляет трекеры в SteamVR и уже добавленным ставит `deviceIsConnected=false`.
+    - **Сервис на шлеме**: программа видит, что он выключен (`dumpsys`, раз в 5 с + строка лога), карточка
+      «Сервис на шлеме выключен», кнопки «Включить сервис» (строка шлема, карточка, меню).
+    Проверено: драйвер — поддельным vrserver (scratchpad `drvtest/host.cpp` + `scenario.py`, 19 проверок, в
+    `unshare -rn`), программа — во вложенном KWin с поддельным adb и поддельным состоянием драйвера (скриншоты).
+    На реальном шлеме и в SteamVR не проверено.
 
 ## Железо и окружение
 
@@ -99,7 +109,7 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   `libAlgSwiftBodyPose*.so` (Swift = Motion Trackers). Приложение трекеров — `com.pvr.swift` («Motion Tracker» 2.0.4).
 - Сопряжены 2 трекера (`mBindTrackerCount 2`). Свойства: `persist.pxr.tracking.swiftVersion=2`,
   `ro.pxr.support.swiftversion=3`, `debug.pxr.tracking.swift_body_tracking_mode=0`.
-- Установлено: PICO Trackers `dev.picotrackers.headset` v1.2 (в репозитории уже 1.4; пробник `dev.picotrackers.probe` удалён), Steam Link `com.valvesoftware.steamlinkvr` 2.0.22 (активности `com.valvesoftware.steamlink.SteamLink`
+- Установлено: PICO Trackers `dev.picotrackers.headset` v1.2 (в репозитории уже 1.5; пробник `dev.picotrackers.probe` удалён), Steam Link `com.valvesoftware.steamlinkvr` 2.0.22 (активности `com.valvesoftware.steamlink.SteamLink`
   — меню, `.VRLink` — стрим), ALVR `alvr.client.stable` 20.14.1 и `alvr.client.dev` (nightly 2026.06.06),
   Virtual Desktop 1.34.22, VRChat, Connect (`com.picovr.picostreamassistant`).
 - Шлем засыпает, когда снят (датчик приближения): `dumpsys power` → `mWakefulness=Asleep`, `Display Power: state=OFF`.
@@ -112,10 +122,10 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   Standable Full Body Estimation, ALVR nightly, наш picotrackers.
 - Android: **`/opt/android-sdk`** — build-tools 37.0.0, platforms android-32/37, NDK 29.0.14206865, platform-tools.
   (`~/Android/Sdk` — только cmdline-tools и NDK 29.0.13846066.) JDK 26 (`javac --release 11`), python3, zip, keytool.
-  Gradle не установлен — и не нужен. **На 2026-10-10 `cmake` и `ninja` в системе нет** (`pacman -Q` их не знает):
-  driver/build.sh и нативная часть headset/build.sh не соберутся — `sudo pacman -S cmake ninja`. 2026-10-10 APK 1.4
-  собран штатным headset/build.sh с заглушкой `cmake` (exit 0) в PATH: libpicotrackers.so из build/cmake была новее
-  исходников и совпадала с той, что в прошлом APK.
+  Gradle не установлен — и не нужен. **На 2026-10-10 `cmake` и `ninja` в системе нет** (`pacman -Q` их не знает) —
+  либо `sudo pacman -S cmake ninja`, либо без изменений в системе: `python3 -m venv <scratchpad>/buildtools &&
+  <…>/bin/pip install cmake ninja` (cmake 4.4, ninja 1.13 — оба build.sh с ними собирают) и этот `bin` первым в PATH.
+  Старые папки CMake (`driver/build/cmake-*`, `headset/build/cmake`) помнили `/usr/bin/ninja` — их пришлось удалить.
 
 **Особенности окружения Claude Code**
 - В окружении задан `HTTP(S)_PROXY`. **`git clone` с GitHub через него не работает** («Proxy CONNECT aborted»),
@@ -145,7 +155,13 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   `get_action_iface().do_action(0)`. GTK 4.22 иногда падает (SIGABRT, `gtk_at_spi_root_to_ref` assertion), если
   AT-SPI-клиент обходит дерево сразу после закрытия диалога — артефакт теста, не программы.
 - `pkill -f <шаблон>` / `pgrep -f` совпадают и с командной строкой своей же оболочки (zsh -c '…шаблон…') — убивают её
-  (код 144). Писать шаблон как `[u]pdtest/…`.
+  (код 144). Писать шаблон как `[u]pdtest/…`. Поддельный «SteamVR» для проверок (копия sleep с именем vrserver)
+  убивать по PID, **не** `pkill -x vrserver` — так можно закрыть настоящий SteamVR пользователя.
+- **Проверка драйвера без SteamVR**: поддельный vrserver — C++ (IVRDriverContext с IVRSettings в файле,
+  IVRServerDriverHost с неподвижным HMD, IVRProperties, IVRDriverLog; VRDriverManager/VRResources — любой ненулевой
+  указатель, драйвер их не вызывает), dlopen собранного .so, RunFrame ~100 раз/с. Шлем и программу изображает Python
+  (PTB1/PTA1 на 127.0.0.1:7788, слушает :7789 и :7790). Запускать в `unshare -rn sh -c 'ip link set lo up; …'` — иначе
+  просьбы драйвера уйдут broadcast'ом настоящему шлему.
 - VS Code: gopls анализирует ~685 тыс. строк gotk4 и перечитывал проект после каждой сборки (тысячи файлов в
   pc/build, pc/third_party) — грузил 8 ядер. В `.vscode/settings.json` эти папки исключены (directoryFilters, watcherExclude).
 - `adb install` пишет «Unknown command: install-incremental» и сам переходит на streamed install — это норма.
@@ -211,7 +227,7 @@ CLAUDE.md, README.md (для людей на GitHub: русский + англи
 .github/workflows/build.yml   CI (GitHub Actions): driver ‖ headset → linux ‖ windows → release (на тег v<appVersion>)
 common/protocol.h              UDP-протокол: Packet (PTB1, шлем→драйвер), ControlPacket (PTC1, драйвер→шлем),
                                порты 7788/7789/7790, флаги, индексы суставов (= XrBodyJointBD)
-headset/                       приложение для шлема, пакет dev.picotrackers.headset v1.4, «PICO Trackers»
+headset/                       приложение для шлема, пакет dev.picotrackers.headset v1.5, «PICO Trackers»
   AndroidManifest.xml          2D-приложение (без pvr.app.type=vr); TrackingService exported с permission
                                DUMP (запускать может только adb shell и само приложение); BootReceiver
   build.sh / fetch_deps.sh     сборка без Gradle → build/PicoTrackers.apk; loader PICO + заголовки Khronos (sha256)
@@ -270,6 +286,8 @@ tools/udp_listen.py            отладка (Python): показывает п�
 ### Протокол (`common/protocol.h`)
 - **PTB1** шлем → ПК:7788, 792 байта: `magic, seq u32, xr_time_ns i64, flags u32 (1 = allJointPosesTracked,
   2 = трекеры готовы), joint_count u32, 24 × {pos[3], rot[4] xyzw, flags u32}`; позиции в STAGE шлема.
+  Без флага 2 (трекеры PICO не подключены) шлем шлёт **пакет состояния**: тот же размер, `joint_count = 0`, суставы
+  нулевые, 5 раз/с. Драйвер 1.3 такой пакет переживает (позы просто невалидны).
 - **PTC1** драйвер → шлем:7789, 12 байт: `magic, data_port u16, command u16 (1 hello, 2 bye), rate_hz u16,
   reserved u16` (шлем читает rate, если длина ≥ 10; при смене частоты hello уходит сразу). Hello раз в 1 с
   на broadcast всех IPv4-интерфейсов + на известный IP шлема (`driver_picotrackers.headset_ip` в настройках
@@ -290,7 +308,10 @@ tools/udp_listen.py            отладка (Python): показывает п�
 - `BodyTracking::init()` → instance (`XR_BD_body_tracking`, `XR_MND_headless`, `XR_KHR_convert_timespec_time`,
   android create instance, apiVersion 1.0) → system → headless-сессия → STAGE → трекер тела (FULL_BODY / WITHOUT_ARM).
   Цикл с частотой `g_rate` (по умолчанию 100/с, 10–250, `Native.setRate` из hello): `xrLocateBodyJointsBD` в IDLE;
-  раз в 1 с `xrGetBodyTrackingStateBD` (PICO-сигнатура) → флаг 2.
+  раз в 1 с `xrGetBodyTrackingStateBD` (PICO-сигнатура) → флаг 2. Трекеры не подключены → скелет не шлётся, только
+  пакет состояния раз в 200 мс (`stats sent=` считает только скелеты). Если рантайм ни разу не ответил на запрос
+  состояния — считаем трекеры подключёнными (иначе трекинг не пошёл бы вовсе; лог «tracker state unavailable»).
+- `onDestroy` сервиса пишет `listener: service stopped` — по ней программа сразу видит выключенный сервис.
   Ошибка/потеря сессии → повтор через 2 с. Поток nice −10.
 - Global ref на контекст — **один на процесс** (loader запоминает его при первом `xrInitializeLoaderKHR`;
   пересоздание роняло процесс «JNI ERROR: accessed deleted Global» — исправлено).
@@ -309,8 +330,10 @@ tools/udp_listen.py            отладка (Python): показывает п�
 - Сокеты: winsock на Windows (broadcast только 255.255.255.255 + известный IP), на Linux — SOCK_CLOEXEC.
 - Регистрация: мастер ставит в `dataDir()/driver/picotrackers` и регистрирует через vrpathreg; старая регистрация
   `driver/build/picotrackers` (из исходников) снимается мастером.
-- Настройки `driver_picotrackers`: `trackers` (по умолчанию 10 с ролями; `all`, `none`; сохраняется при
-  изменениях из программы), `rate` (снимков/с, 10–250, по умолчанию 100), `port` 7788, `headset_ip`.
+- Настройки `driver_picotrackers`: `trackers` (по умолчанию 10 с ролями; `all`, `none`), `rate` (снимков/с, 10–250,
+  по умолчанию 100), `tracking` (просить ли данные у шлема, по умолчанию true) — все три сохраняются при изменениях
+  из программы и действуют без неё (программа отключилась → «работаю с её настройками…», ничего не сбрасывается);
+  `port` 7788, `headset_ip`.
 - Трекеры (serial `PICOTRK-<имя>`): waist→PELVIS, chest→SPINE3, *_foot→ANKLE, *_knee, *_elbow, *_shoulder —
   с ролями `TrackerRole_*`; без роли (`TrackerRole_None`): *_hip, spine1, spine2, *_toes(FOOT), neck, *_collar,
   head, *_wrist, *_hand.
@@ -319,6 +342,10 @@ tools/udp_listen.py            отладка (Python): показывает п�
   SteamVR нельзя — выключенный получает `deviceIsConnected=false` (игры его не видят), включение возвращает.
 - `RunFrame`: команды программы → поза HMD (`GetRawTrackedDevicePoses`, индекс 0) → свежесть данных (< 0.5 с) →
   калибровка → позы трекеров → раз в 0.5 с JSON программе → раз в 10 с строка в vrserver.txt.
+  `fresh_` — шлем на связи (любые пакеты), `poses_` — есть позы: флаг 2 + `joint_count > 0`. Только при `poses_`:
+  калибровка, добавление трекеров в SteamVR, позы, 3D-вид. Шлем на связи, а трекеры не подключены → у добавленных
+  трекеров `deviceIsConnected=false` (как у выключенных); просто нет данных → OutOfRange, как раньше. Смена
+  состояния трекеров — строка в логе. `packets_per_s` считает только пакеты с позами.
 - **Калибровка** (`calibration.cpp`): модель `HMD_raw = T · head · D`; T = поворот вокруг Y + сдвиг, D —
   смещение HMD от сустава head (Q + d). Пары раз в 100 мс при неподвижном HMD (< 0.3 м/с, < 1 рад/с), окно 300.
   Yaw и Q — чередованием, t и d — МНК 6×6 с ridge на d (пока пар < 30: Q = 1, d ≈ 0). 10 пар подряд с ошибкой
@@ -381,6 +408,11 @@ tools/udp_listen.py            отладка (Python): показывает п�
   vrpathreg — `SteamVR\bin\win64\vrpathreg.exe`.
 - `Controller.connectLoop`: раз в 5 с (или по `Reconnect()`) — adb (сохранённый Wi-Fi адрес, иначе USB),
   проверка APK; если стоит — `am start-foreground-service` без host (авторежим) → LogcatFollower. Ничего не ставит.
+  Дальше, пока шлем на связи, раз в 5 с `serviceRunning` (`dumpsys activity services <пакет>/.TrackingService`:
+  есть `ServiceRecord{…TrackingService}` или «(nothing)»); строки лога `listener: waiting…` / `listener: service
+  stopped` меняют состояние сразу. Выключенный сервис программа сама не включает (только при подключении к шлему,
+  как раньше) — карточка «Сервис на шлеме выключен» и кнопки «Включить сервис» (`StartService`; меню —
+  `app.start-service` / `app.stop-service`, их можно вызвать и через D-Bus `org.gtk.Actions.Activate`).
 - APK собирается воспроизводимо (фиксированное время файлов, `zip -X`) — иначе хеш менялся бы при каждой сборке.
 - `installApp`: если `adb install -r` отвечает `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (на шлеме APK с другой подписью —
   локальная сборка против релиза из CI), приложение удаляется (`adb uninstall`) и ставится заново. На шлеме не проверено.

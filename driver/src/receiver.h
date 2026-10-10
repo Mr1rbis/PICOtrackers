@@ -45,6 +45,7 @@ public:
 
     // false — пакетов ещё не было.
     bool latest(Snapshot &out) const;
+    // Сколько пришло снимков с позами (без пакетов состояния).
     uint64_t packet_count() const { return packets_.load(); }
     // IP, с которого пришёл последний снимок ("" — ещё не было).
     std::string headset_ip() const;

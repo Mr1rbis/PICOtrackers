@@ -104,6 +104,7 @@ public class TrackingService extends Service {
         }
         wifiLock.release();
         multicastLock.release();
+        Log.i(TAG, "listener: service stopped");  // по этой строке программа на ПК видит, что сервис выключен
         super.onDestroy();
     }
 

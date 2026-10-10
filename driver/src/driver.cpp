@@ -1,5 +1,8 @@
 // Драйвер SteamVR «picotrackers»: принимает скелет тела со шлема PICO (UDP) и показывает
 // выбранные суставы как трекеры SteamVR. Связь пространств шлема и SteamVR находит Calibration.
+// Настройки программы на ПК (трекинг вкл/выкл, набор трекеров, частота) драйвер хранит в настройках
+// SteamVR и работает с ними и без программы. Пока трекеры PICO не подключены к шлему, в SteamVR
+// ничего не передаётся: скелет без них PICO достраивает сам, и ноги были бы выдуманными.
 
 #include <openvr_driver.h>
 
@@ -122,11 +125,16 @@ public:
         if (error != vr::VRSettingsError_None || rate_ <= 0) rate_ = kDefaultRate;
         receiver_.set_rate(static_cast<uint16_t>(std::clamp(rate_, kMinRate, kMaxRate)));
 
+        tracking_ = vr::VRSettings()->GetBool(kSettingsSection, "tracking", &error);
+        if (error != vr::VRSettingsError_None) tracking_ = true;
+        receiver_.set_request_data(tracking_);
+
         char ip[64] = "";
         vr::VRSettings()->GetString(kSettingsSection, "headset_ip", ip, sizeof(ip), &error);
         saved_headset_ip_ = error == vr::VRSettingsError_None ? ip : "";
 
-        log("запуск: трекеры «%s», UDP-порт %d", enabled_list_.c_str(), port);
+        log("запуск: трекинг %s, трекеры «%s», %d снимков/с, UDP-порт %d", tracking_ ? "включён" : "выключен",
+            enabled_list_.c_str(), rate_, port);
         if (!receiver_.start(static_cast<uint16_t>(port), saved_headset_ip_))
             log("ОШИБКА: не удалось открыть UDP-порт %d", port);
         return vr::VRInitError_None;
@@ -158,16 +166,27 @@ public:
         Receiver::Snapshot snapshot;
         fresh_ = receiver_.latest(snapshot) && now - snapshot.received < kStaleAfter;
         packet_flags_ = fresh_ ? snapshot.packet.flags : 0;
+        // Позы — только при подключённых трекерах: без них шлем шлёт лишь пакеты состояния (joint_count = 0),
+        // а старое приложение — скелет, который PICO достроил без трекеров.
+        poses_ = fresh_ && (packet_flags_ & kFlagTrackersReady) && snapshot.packet.joint_count > 0;
         if (fresh_) {
             remember_headset_ip();
-            feed_calibration(snapshot.packet, hmd, seconds(now));
+            bool ready = packet_flags_ & kFlagTrackersReady;
+            if (ready != trackers_ready_ || !trackers_known_) {
+                trackers_ready_ = ready;
+                trackers_known_ = true;
+                log(ready ? "трекеры PICO подключены — позы идут в SteamVR"
+                          : "трекеры PICO не подключены к шлему — в SteamVR ничего не передаётся");
+            }
         }
+        if (poses_) feed_calibration(snapshot.packet, hmd, seconds(now));
 
         for (auto &tracker : trackers_) {
-            if (fresh_ && tracker->enabled && !tracker->added) add_device(*tracker);
+            if (poses_ && tracker->enabled && !tracker->added) add_device(*tracker);
             if (!tracker->added) continue;
             vr::DriverPose_t pose = make_pose(*tracker, snapshot.packet);
-            if (!tracker->enabled) pose.deviceIsConnected = false;  // «удалён»: игры его не видят
+            // Выключен («удалён») или трекеры PICO не подключены: игры его не видят.
+            if (!tracker->enabled || (fresh_ && !trackers_ready_)) pose.deviceIsConnected = false;
             tracker->update(pose);
         }
 
@@ -181,7 +200,7 @@ public:
             next_app_status_ = now + kAppStatusInterval;
             receiver_.send_to_app(status_json());
         }
-        if (fresh_ && app_connected_ && now >= next_app_poses_) {
+        if (poses_ && app_connected_ && now >= next_app_poses_) {
             next_app_poses_ = now + kAppPosesInterval;
             receiver_.send_to_app(poses_json(snapshot.packet));
         }
@@ -222,35 +241,40 @@ private:
         }
     }
 
-    // Команда программы на ПК: «tracking=0|1 rate=N trackers=a,b,c». Без программы (нет команд 3 с)
-    // драйвер сам просит у шлема данные и держит последний набор трекеров.
+    // Команда программы на ПК: «tracking=0|1 rate=N trackers=a,b,c». Всё запоминается в настройках SteamVR:
+    // без программы (нет команд 3 с) и после перезапуска SteamVR драйвер работает так, как она его оставила.
     void apply_app_command(Receiver::Clock::time_point now) {
         std::string command;
         Receiver::Clock::time_point received;
         bool connected = receiver_.app_command(command, received) && now - received < kAppTimeout;
         if (connected != app_connected_) {
             app_connected_ = connected;
-            log(connected ? "программа на ПК подключилась" : "программа на ПК отключилась — трекинг по умолчанию");
+            if (connected)
+                log("программа на ПК подключилась");
+            else
+                log("программа на ПК отключилась — работаю с её настройками: трекинг %s, трекеры «%s», %d снимков/с",
+                    tracking_ ? "включён" : "выключен", enabled_list_.empty() ? "нет" : enabled_list_.c_str(), rate_);
         }
+        if (!connected) return;
 
-        bool tracking = true;
-        if (connected) {
-            std::stringstream parts(command);
-            std::string part;
-            while (parts >> part) {
-                auto eq = part.find('=');
-                if (eq == std::string::npos) continue;
-                std::string key = part.substr(0, eq), value = part.substr(eq + 1);
-                if (key == "tracking") tracking = value != "0";
-                if (key == "trackers") set_enabled(value, true);
-                if (key == "rate") set_rate(std::atoi(value.c_str()));
-            }
+        std::stringstream parts(command);
+        std::string part;
+        while (parts >> part) {
+            auto eq = part.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = part.substr(0, eq), value = part.substr(eq + 1);
+            if (key == "tracking") set_tracking(value != "0");
+            if (key == "trackers") set_enabled(value, true);
+            if (key == "rate") set_rate(std::atoi(value.c_str()));
         }
-        if (tracking != tracking_) {
-            tracking_ = tracking;
-            log(tracking ? "трекинг включён" : "трекинг выключен программой на ПК");
-        }
+    }
+
+    void set_tracking(bool tracking) {
+        if (tracking == tracking_) return;
+        tracking_ = tracking;
         receiver_.set_request_data(tracking);
+        vr::VRSettings()->SetBool(kSettingsSection, "tracking", tracking);
+        log(tracking ? "трекинг включён" : "трекинг выключен программой на ПК");
     }
 
     void set_rate(int rate) {
@@ -339,7 +363,7 @@ private:
     vr::DriverPose_t make_pose(const TrackerDevice &tracker, const Packet &packet) const {
         vr::DriverPose_t pose = invalid_pose();
         const JointPose &joint = packet.joints[tracker.joint()];
-        if (!fresh_ || !calibration_.valid() || tracker.joint() >= packet.joint_count || !joint_valid(joint)) {
+        if (!poses_ || !calibration_.valid() || tracker.joint() >= packet.joint_count || !joint_valid(joint)) {
             pose.result = vr::TrackingResult_Running_OutOfRange;
             return pose;
         }
@@ -364,8 +388,11 @@ private:
     Calibration calibration_;
     std::string saved_headset_ip_;
 
-    bool fresh_ = false;
-    uint32_t packet_flags_ = 0;  // флаги последнего свежего пакета (Packet::flags)
+    bool fresh_ = false;           // шлем на связи: пакеты приходят
+    bool poses_ = false;           // и в них позы суставов при подключённых трекерах
+    bool trackers_ready_ = false;  // трекеры PICO подключены (по последнему свежему пакету)
+    bool trackers_known_ = false;  // хоть один пакет уже был — состояние трекеров известно
+    uint32_t packet_flags_ = 0;    // флаги последнего свежего пакета (Packet::flags)
     bool hmd_connected_ = false;
     bool app_connected_ = false;
     bool tracking_ = true;

@@ -31,7 +31,7 @@ const (
 	adbWifiPort    = 5555
 	steamVRAppID   = 250820
 	driverName     = "picotrackers"
-	appVersion     = "1.4"
+	appVersion     = "1.5"
 	githubRepo     = "Mr1rbis/PICOtrackers" // релизы: обновление программы (update.go)
 )
 
@@ -395,6 +395,16 @@ func startService(h *Headset) error {
 
 func stopService(h *Headset) {
 	h.Shell("am stopservice -n " + headsetService) // am возвращает 255 даже при успехе
+}
+
+// serviceRunning — запущен ли сервис на шлеме: dumpsys выводит «ServiceRecord{… <пакет>/.TrackingService}»,
+// а если сервиса нет — «(nothing)».
+func serviceRunning(h *Headset) (bool, error) {
+	out, err := h.Shell("dumpsys activity services " + headsetService)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(out, headsetService), nil
 }
 
 // LogcatFollower следит за логом приложения на шлеме: строки «stats …» и «listener: …».

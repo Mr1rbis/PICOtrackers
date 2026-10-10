@@ -1,5 +1,7 @@
 // UDP-протокол между шлемом и драйвером. Little-endian (шлем — arm64, ПК — x86_64), без выравнивания.
-//  * Packet        шлем → ПК:7788  — снимок скелета XR_BD_body_tracking, ~100 раз/с;
+//  * Packet        шлем → ПК:7788  — снимок скелета XR_BD_body_tracking, ~100 раз/с; пока трекеры PICO
+//                                    не подключены — только пакет состояния без суставов (joint_count = 0),
+//                                    5 раз/с: шлем на связи, но поз нет;
 //  * ControlPacket ПК → шлем:7789  — драйвер раз в секунду просит данные (шлем сам начинает трекинг
 //                                    на адрес отправителя и останавливается, если просьбы прекратились);
 //  * программа на ПК ↔ драйвер по 127.0.0.1: команды «PTA1 tracking=1 rate=100 trackers=a,b» → :7788,
@@ -53,7 +55,7 @@ enum Joint : uint8_t {
 
 // Packet::flags
 constexpr uint32_t kFlagAllJointsTracked = 1u << 0;  // allJointPosesTracked
-constexpr uint32_t kFlagTrackersReady = 1u << 1;     // трекеры подключены и откалиброваны
+constexpr uint32_t kFlagTrackersReady = 1u << 1;     // трекеры подключены и откалиброваны (иначе позы не шлются)
 
 // JointPose::flags — младшие биты XrSpaceLocationFlags.
 constexpr uint32_t kJointOrientationValid = 0x1;
@@ -71,7 +73,7 @@ struct Packet {
     uint32_t seq;
     int64_t xr_time_ns;
     uint32_t flags;
-    uint32_t joint_count;  // 24, или 16 если рантайм дал скелет без рук
+    uint32_t joint_count;  // 24, или 16 если рантайм дал скелет без рук; 0 — пакет состояния без поз
     JointPose joints[kJointCount];
 };
 struct ControlPacket {

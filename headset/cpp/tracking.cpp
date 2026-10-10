@@ -1,4 +1,6 @@
 // PICO Trackers (шлем): читает скелет тела XR_BD_body_tracking и шлёт его на ПК по UDP.
+// Пока трекеры PICO не подключены, скелет не шлётся (ноги PICO достраивает без них — выдуманные),
+// только пакет состояния без суставов: драйвер видит, что шлем на связи.
 //
 // Особенности рантайма PICO 4 Pro (Pico(XRT), форк Monado) — подробнее в CLAUDE.md:
 //  * сессия headless (XR_MND_headless): без графики, экран остаётся у Steam Link;
@@ -41,6 +43,7 @@ namespace {
 
 constexpr int kDefaultRate = 100, kMinRate = 10, kMaxRate = 250;  // снимков/с; задаёт драйвер (PTC1 rate_hz)
 constexpr auto kRetryDelay = std::chrono::seconds(2);
+constexpr auto kStatusPacketInterval = std::chrono::milliseconds(200);  // трекеры не подключены
 constexpr int kThreadNice = -10;
 
 // Вариант PICO (так вызывает ALVR): (instance, status, error). У Khronos сигнатура другая,
@@ -284,11 +287,17 @@ public:
         return true;
     }
 
-    // Раз в секунду: подключены ли трекеры (status != 0 — подключены и откалиброваны).
+    // Раз в секунду: подключены ли трекеры (status != 0 — подключены и откалиброваны). Если рантайм
+    // состояние не сообщает ни разу — считаем подключёнными, иначе трекинг не пошёл бы вовсе.
     void refresh_tracker_state() {
-        if (!get_state_) return;
         int32_t status[16]{}, error[16]{};
-        if (XR_SUCCEEDED(get_state_(instance_, status, error))) trackers_ready_ = status[0] != 0;
+        if (get_state_ && XR_SUCCEEDED(get_state_(instance_, status, error))) {
+            trackers_ready_ = status[0] != 0;
+            state_known_ = true;
+        } else if (!state_known_ && !trackers_ready_) {
+            LOGW("tracker state unavailable, sending skeleton anyway");
+            trackers_ready_ = true;
+        }
     }
 
     bool trackers_ready() const { return trackers_ready_; }
@@ -333,6 +342,7 @@ private:
     uint32_t joint_count_ = 0;
     XrSessionState state_ = XR_SESSION_STATE_UNKNOWN;
     bool trackers_ready_ = false;
+    bool state_known_ = false;  // рантайм хоть раз сообщил состояние трекеров
     XrResult last_error_ = XR_SUCCESS;
 
     PFN_xrDestroyBodyTrackerBD destroy_tracker_ = nullptr;
@@ -365,7 +375,7 @@ void run(const std::string &host, int port) {
         uint32_t seq = 0;
         int sent = 0, tracked = 0;
         auto next_tick = std::chrono::steady_clock::now();
-        auto next_report = next_tick;
+        auto next_report = next_tick, next_status_packet = next_tick;
         picotrackers::Packet packet{};
         bool lost = false;
 
@@ -378,7 +388,8 @@ void run(const std::string &host, int port) {
                 std::string err_text = err == XR_SUCCESS ? "" : "\nОшибка опроса: " + body.result_string(err);
                 set_status(format("Отправка на %s: %d пакетов/с\nТрекеры: %s\nСкелет отслеживается: %d/%d\nСессия: %s",
                                   target.c_str(), sent,
-                                  body.trackers_ready() ? "подключены" : "НЕ подключены — включите трекеры",
+                                  body.trackers_ready() ? "подключены"
+                                                        : "НЕ подключены — включите трекеры, до тех пор данные не передаются",
                                   tracked, sent, state_name(body.state())) +
                            err_text);
                 // Строку «stats» разбирает pc/picotrackers.py.
@@ -392,10 +403,17 @@ void run(const std::string &host, int port) {
                 lost = true;
                 break;
             }
-            if (located) {
+            if (located && body.trackers_ready()) {
                 packet.seq = seq++;
                 if (udp.send(&packet, sizeof(packet))) sent++;
                 if (packet.flags & picotrackers::kFlagAllJointsTracked) tracked++;
+            } else if (located && t >= next_status_packet) {
+                // Трекеры не подключены: вместо скелета — пакет состояния без суставов.
+                next_status_packet = t + kStatusPacketInterval;
+                packet.seq = seq++;
+                packet.joint_count = 0;
+                memset(packet.joints, 0, sizeof(packet.joints));
+                udp.send(&packet, sizeof(packet));
             }
 
             next_tick += std::chrono::microseconds(1000000 / g_rate.load());

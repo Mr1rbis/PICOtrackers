@@ -84,6 +84,7 @@ type window struct {
 	toasts                       *adw.ToastOverlay
 	heroDot, heroTitle, heroText *gtk.Label
 	heroButton, steamVRButton    *gtk.Button
+	serviceButton                *gtk.Button
 	headsetRow, steamVRRow       *adw.ActionRow
 	calibrationRow               *adw.ActionRow
 	headsetDot, steamVRDot       *gtk.Label
@@ -117,6 +118,7 @@ func newWindow(app *adw.Application) *window {
 	header.SetTitleWidget(switcher)
 	menu := gio.NewMenu()
 	menu.Append("Мастер установки", "app.wizard")
+	menu.Append("Включить сервис на шлеме", "app.start-service")
 	menu.Append("Выключить сервис на шлеме", "app.stop-service")
 	menu.Append("О программе", "app.about")
 	menuButton := gtk.NewMenuButton()
@@ -263,6 +265,11 @@ func (w *window) buildConnection() *adw.PreferencesGroup {
 	group := adw.NewPreferencesGroup()
 	group.SetTitle("Подключение")
 	w.headsetRow, w.headsetDot = statusRow(group, "Шлем PICO")
+	w.serviceButton = gtk.NewButtonWithLabel("Включить сервис")
+	w.serviceButton.SetVAlign(gtk.AlignCenter)
+	w.serviceButton.ConnectClicked(w.c.StartService)
+	w.serviceButton.SetVisible(false)
+	w.headsetRow.AddSuffix(w.serviceButton)
 	w.steamVRRow, w.steamVRDot = statusRow(group, "SteamVR")
 	w.steamVRButton = gtk.NewButtonWithLabel("Запустить")
 	w.steamVRButton.SetVAlign(gtk.AlignCenter)
@@ -277,7 +284,8 @@ func (w *window) buildTracking() *adw.PreferencesGroup {
 	group := adw.NewPreferencesGroup()
 	w.trackingSwitch = adw.NewSwitchRow()
 	w.trackingSwitch.SetTitle("Передавать трекинг")
-	w.trackingSwitch.SetSubtitle("Выключите, чтобы временно убрать все трекеры — шлем перестанет отправлять данные")
+	w.trackingSwitch.SetSubtitle("Выключите, чтобы временно убрать все трекеры — шлем перестанет отправлять данные. " +
+		"Драйвер помнит это и без программы")
 	w.trackingSwitch.SetActive(s.Tracking)
 	w.trackingSwitch.NotifyProperty("active", func() {
 		if !w.updating {
@@ -459,9 +467,10 @@ func (w *window) buildLog() *adw.PreferencesGroup {
 
 func (w *window) addActions() {
 	for name, callback := range map[string]func(){
-		"wizard":       w.openWizard,
-		"stop-service": w.c.StopService,
-		"about":        w.showAbout,
+		"wizard":        w.openWizard,
+		"start-service": w.c.StartService,
+		"stop-service":  w.c.StopService,
+		"about":         w.showAbout,
 	} {
 		action := gio.NewSimpleAction(name, nil)
 		callback := callback
@@ -553,13 +562,15 @@ func (w *window) refreshHeadset(s Snapshot) {
 	var parts []string
 	state := "dim-label"
 	switch d := s.Driver; {
-	case d != nil && d.Data:
-		ready := "трекеры НЕ подключены"
+	case d != nil && d.Data && !d.TrackersReady:
+		parts = append(parts, "на связи · трекеры НЕ подключены — в SteamVR ничего не передаётся")
 		state = "warning"
-		if d.TrackersReady {
-			ready, state = "трекеры подключены", "success"
-		}
-		parts = append(parts, fmt.Sprintf("передаёт %d из %d пак/с · %s", d.PacketsPerS, d.Rate, ready))
+	case d != nil && d.Data:
+		parts = append(parts, fmt.Sprintf("передаёт %d из %d пак/с · трекеры подключены", d.PacketsPerS, d.Rate))
+		state = "success"
+	case s.ServiceKnown && !s.ServiceRunning:
+		parts = append(parts, "сервис на шлеме выключен")
+		state = "warning"
 	case s.Stats != nil:
 		parts = append(parts, "передаёт "+s.Stats["sent"]+" пак/с")
 		state = "success"
@@ -598,6 +609,7 @@ func (w *window) refreshHeadset(s Snapshot) {
 	}
 	w.headsetRow.SetSubtitle(strings.Join(parts, " · "))
 	setDot(w.headsetDot, state)
+	w.serviceButton.SetVisible(s.ServiceKnown && !s.ServiceRunning)
 }
 
 func (w *window) refreshSteamVR(s Snapshot) {
@@ -630,6 +642,8 @@ func (w *window) refreshCalibration(s Snapshot) {
 	switch d := s.Driver; {
 	case d == nil:
 		text, state = "—", "dim-label"
+	case d.Data && !d.TrackersReady && !d.Calibration.Valid:
+		text, state = "ждёт трекеры PICO", "dim-label"
 	case d.Calibration.Valid:
 		mm := d.Calibration.Error * 1000
 		text = fmt.Sprintf("точность %.0f мм · %d замеров · поворот %.1f°", mm, d.Calibration.Samples, d.Calibration.Yaw)
@@ -660,6 +674,8 @@ func (w *window) refreshTrackers(s Snapshot) {
 			control.setState("выключен", "выключен", "dim-label")
 		case s.Driver == nil:
 			control.setState("включён · SteamVR не на связи", "нет связи со SteamVR", "dim-label")
+		case s.Driver.Data && !s.Driver.TrackersReady:
+			control.setState("трекеры PICO не подключены — в SteamVR не передаётся", "трекеры не подключены", "warning")
 		case !known || !s.Driver.Trackers[i].Enabled:
 			control.setState("применяется…", "применяется…", "dim-label")
 		case s.Driver.Trackers[i].Valid:
@@ -689,6 +705,10 @@ func (w *window) refreshHero(s Snapshot) {
 		title, text, state = "Нужна установка", "Драйвер SteamVR не установлен или устарел", "warning"
 		w.heroButton.SetLabel("Открыть мастер")
 		w.heroAction = w.openWizard
+	case s.ServiceKnown && !s.ServiceRunning:
+		title, text, state = "Сервис на шлеме выключен", "Без него шлем не передаёт трекинг", "warning"
+		w.heroButton.SetLabel("Включить сервис")
+		w.heroAction = w.c.StartService
 	case !s.SteamVRRunning:
 		title, text, state = "Ждём SteamVR", "Подключитесь со шлема через Steam Link или запустите SteamVR", "dim-label"
 		w.heroButton.SetLabel("Запустить SteamVR")
@@ -702,6 +722,9 @@ func (w *window) refreshHero(s Snapshot) {
 		title, text, state = "Трекинг выключен", "Включите переключатель «Передавать трекинг»", "dim-label"
 	case !d.Data:
 		title, text, state = "Ждём данные со шлема", "Шлем включён и надет? Сервис PICO Trackers запущен?", "warning"
+	case !d.TrackersReady:
+		title, text, state = "Трекеры не подключены",
+			"Включите трекеры PICO: пока они не подключены к шлему, в SteamVR ничего не передаётся", "warning"
 	case !d.HMD:
 		title, text, state = "Шлем не подключён к SteamVR", "Подключитесь через Steam Link", "warning"
 	case !d.Calibration.Valid:

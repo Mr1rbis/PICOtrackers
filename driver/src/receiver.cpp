@@ -196,7 +196,7 @@ void Receiver::run() {
         latest_.received = Clock::now();
         has_latest_ = true;
         if (headset_ip_ != ip) headset_ip_ = ip;
-        packets_++;
+        if (packet.joint_count > 0) packets_++;  // пакеты состояния (трекеры не подключены) не считаем
     }
 }
 
