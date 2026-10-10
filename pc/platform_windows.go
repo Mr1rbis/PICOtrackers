@@ -1,7 +1,8 @@
-// Особенности Windows: пути, SteamVR, автозапуск через реестр, команды без окна консоли.
+// Особенности Windows: пути, SteamVR, автозапуск через реестр, команды без окна консоли, обновление установщиком.
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -96,4 +97,61 @@ func removeMenuEntry() {}
 func markRunning() {
 	name, _ := syscall.UTF16PtrFromString(appMutex)
 	syscall.NewLazyDLL("kernel32.dll").NewProc("CreateMutexW").Call(0, 0, uintptr(unsafe.Pointer(name)))
+}
+
+// ---------- обновление (update.go) ----------
+
+// isProgramAsset — установщик в релизе: обновление ставит он, как и первую установку.
+func isProgramAsset(name string) bool {
+	return strings.HasPrefix(name, "PICOtrackers-setup-") && strings.HasSuffix(name, ".exe")
+}
+
+// canSelfUpdate — обновляется только программа, поставленная установщиком (рядом его деинсталлятор),
+// не переносная из zip: установщик поставил бы вторую копию в другую папку.
+func canSelfUpdate() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "unins000.exe")); err != nil {
+		return errors.New("это переносная версия (из zip) — скачайте новую со страницы релиза")
+	}
+	return nil
+}
+
+// installUpdate сохраняет установщик новой версии. restart запускает его после выхода программы: она держит
+// свои файлы и mutex PICOtrackers.Control (AppMutex), из-за которого тихая установка прервалась бы.
+// Ждёт выхода PowerShell. Установщик в режиме /UPDATE ставит драйвер и снова запускает программу.
+func installUpdate(name string, data []byte, log logFunc) (restart func() error, err error) {
+	os.RemoveAll(updateDir())
+	if err := os.MkdirAll(updateDir(), 0o755); err != nil {
+		return nil, err
+	}
+	setup := filepath.Join(updateDir(), name)
+	if err := os.WriteFile(setup, data, 0o755); err != nil {
+		return nil, err
+	}
+	log("установщик новой версии: " + setup)
+	return func() error {
+		script := fmt.Sprintf("Wait-Process -Id %d -Timeout 60 -ErrorAction SilentlyContinue; "+
+			"Start-Process -FilePath '%s' -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/UPDATE'",
+			os.Getpid(), strings.ReplaceAll(setup, "'", "''"))
+		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+		hideConsole(cmd)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		return cmd.Process.Release()
+	}, nil
+}
+
+// waitForExit ждёт выхода процесса, не дольше timeout (--wait-pid; на Windows программу перезапускает установщик).
+func waitForExit(pid int, timeout time.Duration) {
+	const synchronize = 0x00100000
+	handle, err := syscall.OpenProcess(synchronize, false, uint32(pid))
+	if err != nil {
+		return
+	}
+	defer syscall.CloseHandle(handle)
+	syscall.WaitForSingleObject(handle, uint32(timeout.Milliseconds()))
 }

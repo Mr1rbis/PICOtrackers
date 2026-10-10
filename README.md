@@ -118,8 +118,13 @@ chmod +x picotrackers-linux-x86_64
 
 Программу можно не держать открытой: драйвер работает и без неё, с последним выбранным набором трекеров.
 
-После обновления программы она подскажет обновить драйвер и приложение на шлеме (через мастер установки);
-SteamVR после этого нужно перезапустить (на Windows его надо закрыть до обновления драйвера).
+**Обновление.** При каждом запуске программа проверяет, нет ли на GitHub версии новее. Если есть — откроется окно
+«Доступна версия …». Обновление скачивается и ставится, только когда **SteamVR закрыт** и **шлем подключён
+к компьютеру USB-кабелем** с разрешённой отладкой по USB: вместе с программой обновляются драйвер SteamVR и
+приложение на шлеме. Окно можно закрыть кнопкой «Позже» — при следующем запуске оно откроется снова (и есть
+строка «Обновление» в настройках). Linux: программа заменит свой файл и перезапустится. Windows: программа
+закроется, установщик обновит её в тихом режиме и запустит снова; переносная версия из zip сама не обновляется.
+Файлы сверяются с `SHA256SUMS.txt` релиза. Обновляться так умеет версия 1.4 и новее — с 1.3 обновитесь вручную.
 
 **Удаление.** Linux: Настройки → «Удалить программу» (или `picotrackers uninstall`). Windows: «Параметры →
 Приложения» — деинсталлятор снимает драйвер с регистрации в SteamVR и удаляет данные программы.
@@ -299,8 +304,14 @@ The app window:
 
 You don't have to keep the app open: the driver works without it, with the last tracker selection.
 
-After you update the app, it will tell you to update the driver and the headset app (through the setup wizard);
-restart SteamVR after that (on Windows SteamVR has to be closed before the driver can be updated).
+**Updates.** Every time it starts, the app checks GitHub for a newer version. If there is one, an "Update
+available" window opens. The update is only downloaded and installed when **SteamVR is closed** and **the
+headset is connected to the PC with a USB cable** with USB debugging allowed: the SteamVR driver and the headset
+app are updated together with the program. You can close the window with "Later", but it will open again on the
+next start (there's also an "Update" row in Settings). Linux: the app replaces its own file and restarts.
+Windows: the app closes, the installer updates it silently and starts it again; the portable zip version doesn't
+update itself. Files are checked against the release's `SHA256SUMS.txt`. Versions 1.4 and later can update
+this way; update from 1.3 by hand.
 
 **Uninstall.** Linux: Settings → "Remove program" (or `picotrackers uninstall`). Windows: Settings → Apps; the
 uninstaller unregisters the driver from SteamVR and removes the app's data.

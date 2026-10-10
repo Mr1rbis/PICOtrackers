@@ -4,6 +4,10 @@
 ; Ставит программу для текущего пользователя (без прав администратора) и по галочке — драйвер SteamVR
 ; (picotrackers.exe install-driver). Приложение на шлем ставит мастер в самой программе при первом запуске.
 ; Деинсталлятор снимает драйвер с регистрации в SteamVR и удаляет данные программы (picotrackers.exe uninstall).
+;
+; Обновление из программы (platform_windows.go, installUpdate): после её выхода — /SILENT /SUPPRESSMSGBOXES
+; /NORESTART /UPDATE. Галочки берутся с прошлой установки; драйвер обновляется и тогда, когда его ставил
+; мастер в программе, а не установщик; в конце программа запускается снова (picotrackers.exe --updated).
 
 #ifndef AppVersion
   #error Укажите /DAppVersion=…
@@ -105,6 +109,23 @@ begin
     0, IDCANCEL) = IDRETRY;
 end;
 
+{ Запущен программой для обновления (параметр /UPDATE). }
+function IsUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/UPDATE') = 0 then
+      Result := True;
+end;
+
+{ Драйвер, установленный программой (picotrackers.exe install-driver, мастер): core.go, driverInstallDir. }
+function DriverInstalled: Boolean;
+begin
+  Result := DirExists(ExpandConstant('{localappdata}\PICOtrackers\driver\picotrackers'));
+end;
+
 procedure InstallDriver;
 var
   Code: Integer;
@@ -128,9 +149,13 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Code: Integer;
 begin
-  if (CurStep = ssPostInstall) and WizardIsTaskSelected('driver') then
+  if (CurStep = ssPostInstall) and (WizardIsTaskSelected('driver') or (IsUpdate and DriverInstalled)) then
     InstallDriver;
+  if (CurStep = ssDone) and IsUpdate then
+    Exec(ExpandConstant('{app}\picotrackers.exe'), '--updated', '', SW_SHOWNORMAL, ewNoWait, Code);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

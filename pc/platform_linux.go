@@ -1,4 +1,4 @@
-// Особенности Linux: пути, SteamVR, автозапуск через .desktop, установка самой программы.
+// Особенности Linux: пути, SteamVR, автозапуск через .desktop, установка и обновление самой программы.
 package main
 
 import (
@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -153,3 +155,86 @@ func setAutostart(enabled bool) {
 func removeMenuEntry() { os.Remove(menuEntryPath()) }
 
 func markRunning() {}
+
+// ---------- обновление (update.go) ----------
+
+// isProgramAsset — программа для Linux в релизе (собирается только под x86_64).
+func isProgramAsset(name string) bool {
+	return runtime.GOARCH == "amd64" && name == "picotrackers-linux-x86_64"
+}
+
+// updateTargets — файлы, которые заменяет обновление: запущенный и установленная копия в ~/.local/bin.
+func updateTargets() ([]string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	targets := []string{self}
+	if _, err := os.Stat(installedExecutable()); err == nil && installedExecutable() != self {
+		targets = append(targets, installedExecutable())
+	}
+	return targets, nil
+}
+
+// canSelfUpdate — можно ли заменить файлы программы (нельзя, если её поставили в системную папку).
+func canSelfUpdate() error {
+	targets, err := updateTargets()
+	if err != nil {
+		return err
+	}
+	for _, path := range targets {
+		if dir := filepath.Dir(path); syscall.Access(dir, 2 /* W_OK */) != nil {
+			return fmt.Errorf("нет прав на запись в %s — обновите программу тем же способом, каким устанавливали", dir)
+		}
+	}
+	return nil
+}
+
+// installUpdate подменяет файлы программы новой версией и ставит её драйвер (SteamVR закрыт — условие
+// обновления). restart запускает новую версию: она дождётся выхода этой (D-Bus и UDP-порт заняты ею).
+func installUpdate(_ string, data []byte, log logFunc) (restart func() error, err error) {
+	targets, err := updateTargets()
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range targets {
+		log("обновляю программу: " + path)
+		if err := replaceFile(path, data, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	exe := targets[0]
+	// Драйвер вшит в новую версию — она его и ставит. Не установлен — поставит мастер, как и раньше.
+	if driverState().Installed {
+		if _, err := run(exe, "install-driver"); err != nil {
+			log("драйвер SteamVR не обновлён — обновите его в мастере установки: " + err.Error())
+		} else {
+			log("драйвер SteamVR обновлён")
+		}
+	}
+	return func() error {
+		cmd := exec.Command(exe, fmt.Sprintf("--wait-pid=%d", os.Getpid()), "--updated")
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		return cmd.Process.Release()
+	}, nil
+}
+
+// waitForExit ждёт выхода процесса (прошлой версии программы после обновления), не дольше timeout.
+func waitForExit(pid int, timeout time.Duration) {
+	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err != nil {
+			return
+		}
+		// «pid (имя) состояние …»: Z — процесс завершился, но родитель ещё не забрал код выхода.
+		if i := bytes.LastIndexByte(stat, ')'); i >= 0 && bytes.HasPrefix(stat[i+1:], []byte(" Z")) {
+			return
+		}
+	}
+}

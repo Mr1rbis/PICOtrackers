@@ -1,6 +1,7 @@
 # CLAUDE.md — PICOtrackers
 
-Всё, что известно о проекте на 2026-10-07. Общение с пользователем — на русском.
+Всё, что известно о проекте на 2026-10-10. Общение с пользователем — на русском.
+Репозиторий: git, GitHub **`Mr1rbis/PICOtrackers`** (ветка main), релизы собирает CI по тегу `v<appVersion>`.
 
 ## Цель
 
@@ -75,7 +76,16 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
    для запуска (пакеты по дистрибутивам, Windows), сборка, CI, «покопаться руками» в фурри-стиле (просьба
    пользователя). CI `.github/workflows/build.yml` (см. раздел CI) прогнан локально в контейнерах из чистого
    git-клона: все задачи собрались, `go test` прошёл, в программы для Linux и Windows вшиты одни и те же APK и
-   драйвер. На настоящем GitHub ещё не запускался (проект не в git). Программа: переустановка APK при чужой подписи.
+   драйвер. Программа: переустановка APK при чужой подписи. Потом проект попал на GitHub (`Mr1rbis/PICOtrackers`),
+   CI отработал там: релиз **v1.3** (picotrackers-linux-x86_64, setup.exe, zip, APK, SHA256SUMS.txt) опубликован.
+9. ✅ Автообновление (программа 1.4, 2026-10-10, по просьбе пользователя): при **каждом запуске** — последний релиз
+   на GitHub; новее → окно «Доступна версия …». Скачивается и ставится **только** при закрытом SteamVR и шлеме,
+   подключённом **USB-кабелем** с разрешённой отладкой (adb `device`); иначе кнопка неактивна. «Позже» закрывает окно,
+   при следующем запуске оно откроется снова. Проверено на Linux во вложенном KWin с подставным релизом и поддельным
+   adb: блокировка по условиям, загрузка + SHA256, установка APK, подмена файла, перезапуск `--wait-pid --updated`,
+   отказ при чужой контрольной сумме, папка без прав записи, нет сети → мастер. Установщик в режиме `/UPDATE` —
+   под Wine (драйвер переустановлен, программа запущена с `--updated`). PowerShell-ожидание на Windows и обновление
+   с реальным шлемом не проверены. Версия 1.3 обновляться не умеет — с неё только вручную.
 
 ## Железо и окружение
 
@@ -89,7 +99,7 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   `libAlgSwiftBodyPose*.so` (Swift = Motion Trackers). Приложение трекеров — `com.pvr.swift` («Motion Tracker» 2.0.4).
 - Сопряжены 2 трекера (`mBindTrackerCount 2`). Свойства: `persist.pxr.tracking.swiftVersion=2`,
   `ro.pxr.support.swiftversion=3`, `debug.pxr.tracking.swift_body_tracking_mode=0`.
-- Установлено: PICO Trackers `dev.picotrackers.headset` v1.2 (пробник `dev.picotrackers.probe` удалён), Steam Link `com.valvesoftware.steamlinkvr` 2.0.22 (активности `com.valvesoftware.steamlink.SteamLink`
+- Установлено: PICO Trackers `dev.picotrackers.headset` v1.2 (в репозитории уже 1.4; пробник `dev.picotrackers.probe` удалён), Steam Link `com.valvesoftware.steamlinkvr` 2.0.22 (активности `com.valvesoftware.steamlink.SteamLink`
   — меню, `.VRLink` — стрим), ALVR `alvr.client.stable` 20.14.1 и `alvr.client.dev` (nightly 2026.06.06),
   Virtual Desktop 1.34.22, VRChat, Connect (`com.picovr.picostreamassistant`).
 - Шлем засыпает, когда снят (датчик приближения): `dumpsys power` → `mWakefulness=Asleep`, `Display Power: state=OFF`.
@@ -101,8 +111,11 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   контейнере pressure-vessel (SteamLinuxRuntime_sniper). Драйвер Steam Link — `drivers/vrlink`. Внешние драйверы:
   Standable Full Body Estimation, ALVR nightly, наш picotrackers.
 - Android: **`/opt/android-sdk`** — build-tools 37.0.0, platforms android-32/37, NDK 29.0.14206865, platform-tools.
-  (`~/Android/Sdk` — только cmdline-tools и NDK 29.0.13846066.) JDK 26 (`javac --release 11`), cmake, ninja,
-  python3, zip, keytool. Gradle не установлен — и не нужен.
+  (`~/Android/Sdk` — только cmdline-tools и NDK 29.0.13846066.) JDK 26 (`javac --release 11`), python3, zip, keytool.
+  Gradle не установлен — и не нужен. **На 2026-10-10 `cmake` и `ninja` в системе нет** (`pacman -Q` их не знает):
+  driver/build.sh и нативная часть headset/build.sh не соберутся — `sudo pacman -S cmake ninja`. 2026-10-10 APK 1.4
+  собран штатным headset/build.sh с заглушкой `cmake` (exit 0) в PATH: libpicotrackers.so из build/cmake была новее
+  исходников и совпадала с той, что в прошлом APK.
 
 **Особенности окружения Claude Code**
 - В окружении задан `HTTP(S)_PROXY`. **`git clone` с GitHub через него не работает** («Proxy CONNECT aborted»),
@@ -118,10 +131,21 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
     Inno Setup зарегистрировал себя обработчиком text/plain и перезаписал wine-extension-*.desktop пользователя
     (`~/.wine`) — всё это было вычищено/восстановлено 2026-10-07.
   - Окна под Wine смотреть на Xvfb :77 (`import -window root`, `xdotool key Return`), не на экране пользователя.
+    **На 2026-10-10 Xvfb в системе нет** — вместо него вложенный невидимый KWin (см. «Проверка окон» ниже).
   - Inno под Wine: в списках картинок (`WizardImageFile=a.png,b.png`) путь приводится к нижнему регистру и Wine не
     находит `PROJ` → картинки отдаются через диск `R:` (симлинк в dosdevices).
   - Pascal Script Inno 7: `Trim`, `Copy`, `AnsiUppercase` идут через ANSI и портят кириллицу на нерусской Windows
     (`Format`, `LoadStringsFromFile`, `Utf8Decode`, склейка `+` — нормально). Сообщения готовит программа.
+- **Проверка окон программы без экрана пользователя** (2026-10-10): `dbus-run-session -- kwin_wayland --virtual
+  --width 1100 --height 1000 --socket <имя> --xwayland --exit-with-session <скрипт, пишущий env и спящий>`; программу
+  запускать с `GDK_BACKEND=x11`, отдельным `HOME`, `PATH` с поддельным `adb` (скрипт, отвечающий на devices / pm path /
+  sha256sum / install), снимки — `import -window <id из xdotool search>`. Мышь и клавиатура xdotool в этот Xwayland
+  **не доходят** — кнопки нажимать через AT-SPI: в том же D-Bus запустить `/usr/lib/at-spi-bus-launcher
+  --launch-immediately` и `/usr/lib/at-spi2-registryd`, программу без `NO_AT_BRIDGE`, Python `gi` Atspi →
+  `get_action_iface().do_action(0)`. GTK 4.22 иногда падает (SIGABRT, `gtk_at_spi_root_to_ref` assertion), если
+  AT-SPI-клиент обходит дерево сразу после закрытия диалога — артефакт теста, не программы.
+- `pkill -f <шаблон>` / `pgrep -f` совпадают и с командной строкой своей же оболочки (zsh -c '…шаблон…') — убивают её
+  (код 144). Писать шаблон как `[u]pdtest/…`.
 - VS Code: gopls анализирует ~685 тыс. строк gotk4 и перечитывал проект после каждой сборки (тысячи файлов в
   pc/build, pc/third_party) — грузил 8 ядер. В `.vscode/settings.json` эти папки исключены (directoryFilters, watcherExclude).
 - `adb install` пишет «Unknown command: install-incremental» и сам переходит на streamed install — это норма.
@@ -187,7 +211,7 @@ CLAUDE.md, README.md (для людей на GitHub: русский + англи
 .github/workflows/build.yml   CI (GitHub Actions): driver ‖ headset → linux ‖ windows → release (на тег v<appVersion>)
 common/protocol.h              UDP-протокол: Packet (PTB1, шлем→драйвер), ControlPacket (PTC1, драйвер→шлем),
                                порты 7788/7789/7790, флаги, индексы суставов (= XrBodyJointBD)
-headset/                       приложение для шлема, пакет dev.picotrackers.headset v1.2, «PICO Trackers»
+headset/                       приложение для шлема, пакет dev.picotrackers.headset v1.4, «PICO Trackers»
   AndroidManifest.xml          2D-приложение (без pvr.app.type=vr); TrackingService exported с permission
                                DUMP (запускать может только adb shell и само приложение); BootReceiver
   build.sh / fetch_deps.sh     сборка без Gradle → build/PicoTrackers.apk; loader PICO + заголовки Khronos (sha256)
@@ -208,6 +232,9 @@ driver/                        драйвер SteamVR «picotrackers» (C++17, L
   src/calibration.*            STAGE шлема → raw-пространство SteamVR
   src/tracker_device.*         устройство SteamVR (свойства, иконки {htc}, модель {htc}vr_tracker_vive_1_0)
 pc/                            программа на ПК (Go, модуль picotrackers; gotk4 v0.4.1 + gotk4-adwaita), Linux и Windows
+  update.go                    обновление: последний релиз GitHub, сравнение версий, загрузка + SHA256SUMS, условия,
+                               Release.Install (APK на шлем, затем installUpdate из platform_*.go); update_test.go
+  updatedialog.go              окно обновления (на wizardStep из wizard.go), строка «Обновление» в настройках
   build.sh                     prepare_assets.sh + go build → build/picotrackers. Первая сборка ~9 мин (cgo-биндинги
                                GTK); НЕ добавлять -trimpath — он меняет ключи кэша и всё компилируется заново
   prepare_assets.sh            driver/build.sh (Linux+Windows) + headset/build.sh → assets/ (go:embed, gitignore);
@@ -230,7 +257,8 @@ pc/                            программа на ПК (Go, модуль pi
   wizard.go                    мастер установки (Adw.Dialog + NavigationView); на Linux первый шаг «Программа»
   install_test.go              тест установки драйвера во временном HOME
   main.go                      вход: окно; подкоманды setup / stop / install-driver / uninstall (последние две —
-                               для установщика: --message-file=F, коды 0 / 1 ошибка / 3 мешает запущенный SteamVR)
+                               для установщика: --message-file=F, коды 0 / 1 ошибка / 3 мешает запущенный SteamVR);
+                               --updated (тост «обновлена»), --wait-pid=N (дождаться выхода прошлой версии)
   core.go                      adb и шлем, установка APK, сборка/регистрация драйвера, LogcatFollower, SteamVR
   controller.go                фон: UDP с драйвером, установка, состояние (Snapshot для окна)
   gui.go                       окно libadwaita, вкладки; GTK только из главного потока (glib.IdleAdd / TimeoutAdd)
@@ -310,11 +338,32 @@ tools/udp_listen.py            отладка (Python): показывает п�
   `~/.local/bin/picotrackers` (replaceFile), значок в `~/.local/share/icons/hicolor/scalable/apps/<appID>.svg`,
   пункт меню `~/.local/share/applications/<appID>.desktop` (переключатель, Icon=<appID>). Настройки → «Удалить
   программу» = `uninstall()` (+ removeProgramFiles) и выход. На Windows `selfInstall=false` — установщик.
-- Версия программы — `appVersion` в core.go (окно «О программе», ресурсы exe, имя установщика).
+- Версия программы — `appVersion` в core.go (окно «О программе», ресурсы exe, имя установщика, сравнение с тегом
+  релиза при обновлении). Новый релиз: поднять appVersion, закоммитить, тег `v<appVersion>` → CI.
+- **Автообновление** (`update.go`, `updatedialog.go`): при запуске окна горутина чистит `dataDir()/update`, спрашивает
+  `api.github.com/repos/Mr1rbis/PICOtrackers/releases/latest` (таймаут 15 с; `PICOTRACKERS_UPDATE_URL` подменяет адрес —
+  для тестов). Тег новее `appVersion` (числа через точку; `/latest` не отдаёт pre-release) и в релизе есть программа для
+  этой ОС + `PicoTrackers.apk` + `SHA256SUMS.txt` → строка в настройках и окно обновления; **мастер в этом случае не
+  открывается** (обновление и так обновит драйвер и APK). Нет сети / ошибка — строка в журнале, дальше как раньше.
+  - Условия (`UpdateConditions`, опрос раз в 2 с): `steamVRStartedAt` = не запущен, `usbHeadset()` в состоянии `device`
+    (Wi-Fi adb не считается). Нет adb — кнопка «Скачать adb». Проверяются и перед загрузкой, и перед установкой.
+  - `Release.Install`: SHA256SUMS → программа и APK в память, сверка хешей → APK на шлем по USB, если хеш на шлеме
+    другой (`installedAPKHash`) → `installUpdate`. Во время установки окно закрыть нельзя (`SetCanClose(false)`).
+  - Linux: заменяет (replaceFile) запущенный файл и копию в `~/.local/bin`, если они разные; нет прав на папку
+    (`canSelfUpdate`, например /usr) — только кнопка «Страница загрузки». Драйвер ставит новая версия:
+    `<новый файл> install-driver`, если драйвер был установлен. Перезапуск — `<файл> --wait-pid=<pid> --updated`
+    (Setsid), новая версия ждёт выхода старой (`/proc/<pid>/stat`, зомби считается вышедшим), иначе D-Bus-имя
+    приложения ещё занято и новый процесс просто активирует старый.
+  - Windows: только установленная установщиком (рядом `unins000.exe`), переносная из zip — «Страница загрузки».
+    Установщик → `dataDir()\update\`, затем PowerShell `Wait-Process <pid>; Start-Process setup /SILENT
+    /SUPPRESSMSGBOXES /NORESTART /UPDATE` и выход программы (её mutex = AppMutex, в тихом режиме установка бы прервалась).
 - **Установщик Windows** (`windows/installer.iss`): `{autopf}` при `PrivilegesRequired=lowest` = `%LOCALAPPDATA%\Programs\
   PICO Trackers`. После копирования файлов (ssPostInstall, галочка «driver») — `picotrackers.exe install-driver
   --message-file=…`, при ошибке окно «Повторить / Пропустить» (код 3 — «закройте SteamVR»); сообщение читается
-  из файла (UTF-8), а не из stdout — кодировку перехваченного вывода Inno не документирует. Деинсталлятор
+  из файла (UTF-8), а не из stdout — кодировку перехваченного вывода Inno не документирует.
+  Режим `/UPDATE` (запуск из программы): галочки — с прошлой установки; драйвер ставится и без галочки, если он уже
+  есть в `{localappdata}\PICOtrackers\driver\picotrackers` (мог поставить мастер программы); на `ssDone` —
+  `picotrackers.exe --updated`. В тихом режиме окно «Повторить / Пропустить» отвечает «Пропустить». Деинсталлятор
   (usUninstall) — `picotrackers.exe uninstall`: `registerDriver("")` (снять все регистрации picotrackers), автозапуск
   выкл., `adb kill-server` своего adb, удалить dataDir и configDir. Программа держит mutex `PICOtrackers.Control`
   (`markRunning`) — по нему установщик просит её закрыть. Галочка «автозапуск» пишет то же значение реестра,
@@ -393,4 +442,4 @@ python3 -c "import socket,struct;s=socket.socket(2,2);s.setsockopt(1,6,1);s.send
 - C++17; Java без внешних библиотек (UI кодом); Go — gofmt. IDE показывает ложные ошибки в Java (нет android.jar
   в её classpath) — собирать через build.sh.
 - Сторонние зависимости не коммитить — только через fetch_deps.sh / go.sum с закреплёнными версиями.
-- Проект не в git (пользователь не просил инициализировать).
+- Проект в git, GitHub `Mr1rbis/PICOtrackers`. Коммитить и пушить — только когда пользователь попросит.

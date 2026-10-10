@@ -31,7 +31,8 @@ const (
 	adbWifiPort    = 5555
 	steamVRAppID   = 250820
 	driverName     = "picotrackers"
-	appVersion     = "1.3"
+	appVersion     = "1.4"
+	githubRepo     = "Mr1rbis/PICOtrackers" // релизы: обновление программы (update.go)
 )
 
 type tracker struct {
@@ -324,15 +325,26 @@ const (
 	AppInstalled
 )
 
-// appState сравнивает установленное на шлеме приложение со вшитым в программу.
-func appState(h *Headset) AppState {
+// installedAPKHash — sha256 APK приложения на шлеме; "" — приложение не установлено.
+func installedAPKHash(h *Headset) string {
 	path, _ := h.Shell("pm path " + headsetPackage)
 	path = strings.TrimPrefix(path, "package:")
 	if path == "" {
-		return AppMissing
+		return ""
 	}
 	out, _ := h.Shell("sha256sum " + path)
-	if fields := strings.Fields(out); len(fields) > 0 && fields[0] == apkHash() {
+	if fields := strings.Fields(out); len(fields) > 0 {
+		return fields[0]
+	}
+	return "?" // установлено, но хеш не прочитать — считаем, что версия другая
+}
+
+// appState сравнивает установленное на шлеме приложение со вшитым в программу.
+func appState(h *Headset) AppState {
+	switch hash := installedAPKHash(h); hash {
+	case "":
+		return AppMissing
+	case apkHash():
 		return AppInstalled
 	}
 	return AppOutdated
@@ -344,6 +356,11 @@ func installApp(h *Headset, log logFunc) error {
 	if err != nil {
 		return errors.New("в программу не вшито приложение для шлема — пересоберите её через build.sh")
 	}
+	return installAPK(h, data, log)
+}
+
+// installAPK ставит на шлем приложение из data (вшитое или скачанное с обновлением).
+func installAPK(h *Headset, data []byte, log logFunc) error {
 	file, err := os.CreateTemp("", "PicoTrackers-*.apk")
 	if err != nil {
 		return err

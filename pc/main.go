@@ -12,6 +12,9 @@
 //
 // Сообщение для пользователя (ошибка или просьба перезапустить SteamVR) пишется в F (UTF-8, готовое к показу).
 // Коды выхода: 0 — готово, 1 — ошибка, 3 — мешает запущенный SteamVR.
+//
+// После обновления (update.go) окно запускается с --updated (сообщить о новой версии), на Linux ещё
+// с --wait-pid=N — дождаться выхода прошлой версии.
 package main
 
 import (
@@ -19,41 +22,52 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
-// messageFile — куда команды для установщика пишут сообщение для пользователя.
-var messageFile string
+var (
+	messageFile string // куда команды для установщика пишут сообщение для пользователя
+	waitPID     int    // --wait-pid: процесс прошлой версии программы
+	justUpdated bool   // --updated: программу только что обновили
+)
 
 func main() {
 	slog.SetLogLoggerLevel(slog.LevelWarn) // GTK пишет в slog отладочные сообщения Vulkan и т.п.
-	if len(os.Args) > 1 {
-		for _, arg := range os.Args[2:] {
-			if file, ok := strings.CutPrefix(arg, "--message-file="); ok {
-				messageFile = file
-			}
-		}
-		switch os.Args[1] {
-		case "setup":
-			exit(cliSetup())
-		case "stop":
-			exit(cliStop())
-		case "install-driver":
-			err := installDriver(cliLog)
-			if err == nil && steamVRNeedsRestart() {
-				message("SteamVR уже запущен — перезапустите его, чтобы трекеры появились.")
-			}
-			exit(err)
-		case "uninstall":
-			exit(uninstall(cliLog))
-		default:
-			fmt.Fprintln(os.Stderr, "использование: picotrackers [setup|stop|install-driver|uninstall]")
-			os.Exit(2)
+	command := ""
+	for _, arg := range os.Args[1:] {
+		switch {
+		case strings.HasPrefix(arg, "--message-file="):
+			messageFile = strings.TrimPrefix(arg, "--message-file=")
+		case strings.HasPrefix(arg, "--wait-pid="):
+			waitPID, _ = strconv.Atoi(strings.TrimPrefix(arg, "--wait-pid="))
+		case arg == "--updated":
+			justUpdated = true
+		case command == "":
+			command = arg
 		}
 	}
-	os.Exit(runGUI())
+	switch command {
+	case "":
+		os.Exit(runGUI())
+	case "setup":
+		exit(cliSetup())
+	case "stop":
+		exit(cliStop())
+	case "install-driver":
+		err := installDriver(cliLog)
+		if err == nil && steamVRNeedsRestart() {
+			message("SteamVR уже запущен — перезапустите его, чтобы трекеры появились.")
+		}
+		exit(err)
+	case "uninstall":
+		exit(uninstall(cliLog))
+	default:
+		fmt.Fprintln(os.Stderr, "использование: picotrackers [setup|stop|install-driver|uninstall]")
+		os.Exit(2)
+	}
 }
 
 func message(text string) {
@@ -67,8 +81,16 @@ func writeMessageFile(text string) {
 	if messageFile == "" || text == "" {
 		return
 	}
+	os.WriteFile(messageFile, []byte(capitalize(text)), 0o644)
+}
+
+// capitalize — текст ошибки для показа: с заглавной буквы.
+func capitalize(text string) string {
 	first, size := utf8.DecodeRuneInString(text)
-	os.WriteFile(messageFile, []byte(string(unicode.ToUpper(first))+text[size:]), 0o644)
+	if size == 0 {
+		return text
+	}
+	return string(unicode.ToUpper(first)) + text[size:]
 }
 
 func exit(err error) {

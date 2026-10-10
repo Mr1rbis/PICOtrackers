@@ -28,6 +28,9 @@ const css = `
 `
 
 func runGUI() int {
+	if waitPID > 0 {
+		waitForExit(waitPID, 15*time.Second) // прошлая версия ещё держит имя на D-Bus и UDP-порт
+	}
 	app := adw.NewApplication(appID, gio.ApplicationDefaultFlags)
 	var w *window
 	app.ConnectStartup(func() {
@@ -91,6 +94,9 @@ type window struct {
 	view3d                       *view3D
 	controls                     map[string]trackerControl
 	wizard                       *wizard
+	update                       *Release // версия новее, nil — нет
+	updateOpen                   bool     // открыто окно обновления
+	updateRow                    *adw.ActionRow
 	heroAction                   func()
 	logBuffer                    *gtk.TextBuffer
 	logLines                     []string
@@ -156,8 +162,23 @@ func newWindow(app *adw.Application) *window {
 
 	w.win.Present()
 	w.refresh()
+	if justUpdated {
+		w.toasts.AddToast(adw.NewToast("PICO Trackers обновлена до версии " + appVersion))
+		w.logFromThread("программа обновлена до версии " + appVersion)
+	}
+	// При каждом запуске: есть новая версия — окно обновления (оно обновит и драйвер, и приложение на шлеме),
+	// иначе, если нужно, мастер установки.
 	go func() {
-		if wizardNeeded() {
+		os.RemoveAll(updateDir())
+		release, err := checkForUpdate()
+		if err != nil {
+			w.logFromThread("не удалось проверить обновления: " + err.Error())
+		}
+		switch {
+		case release != nil:
+			w.logFromThread("доступна новая версия " + release.Version)
+			glib.IdleAdd(func() { w.setUpdate(release) })
+		case wizardNeeded():
 			glib.IdleAdd(w.openWizard)
 		}
 	}()
@@ -353,6 +374,16 @@ func (w *window) buildApp() *adw.PreferencesGroup {
 	autostart.SetActive(autostartEnabled())
 	autostart.NotifyProperty("active", func() { setAutostart(autostart.Active()) })
 	group.Add(autostart)
+
+	w.updateRow = adw.NewActionRow()
+	w.updateRow.SetTitle("Обновление")
+	update := gtk.NewButtonWithLabel("Обновить")
+	update.AddCSSClass("suggested-action")
+	update.SetVAlign(gtk.AlignCenter)
+	update.ConnectClicked(w.openUpdate)
+	w.updateRow.AddSuffix(update)
+	w.updateRow.SetVisible(false)
+	group.Add(w.updateRow)
 
 	wizardRow := adw.NewActionRow()
 	wizardRow.SetTitle("Мастер установки")
