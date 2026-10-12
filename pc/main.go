@@ -5,6 +5,11 @@
 //	picotrackers setup    установить драйвер SteamVR и приложение на шлем без мастера
 //	picotrackers stop     выключить сервис на шлеме
 //
+// --dev — своя сборка для проверки (pc/build.sh): всё работает как обычно (драйвер, шлем, мастер), но программа
+// не встраивается в систему — не копирует себя в ~/.local/bin, не создаёт пункт меню, не меняет автозапуск и не
+// проверяет обновления (иначе предложила бы заменить себя релизом). Установленная версия, её пункт меню и
+// автозапуск остаются как были.
+//
 // Для установщика Windows (windows/installer.iss), без вопросов и вывода в консоль:
 //
 //	picotrackers install-driver [--message-file=F]  установить драйвер SteamVR
@@ -32,10 +37,20 @@ var (
 	messageFile string // куда команды для установщика пишут сообщение для пользователя
 	waitPID     int    // --wait-pid: процесс прошлой версии программы
 	justUpdated bool   // --updated: программу только что обновили
+	devMode     bool   // --dev: своя сборка для проверки — в систему не встраивается
 )
+
+// devArgs — флаги, с которыми программа перезапускается (смена языка): режим --dev сохраняется.
+func devArgs() []string {
+	if devMode {
+		return []string{"--dev"}
+	}
+	return nil
+}
 
 func main() {
 	slog.SetLogLoggerLevel(slog.LevelWarn) // GTK пишет в slog отладочные сообщения Vulkan и т.п.
+	setupLanguage()
 	command := ""
 	for _, arg := range os.Args[1:] {
 		switch {
@@ -45,9 +60,17 @@ func main() {
 			waitPID, _ = strconv.Atoi(strings.TrimPrefix(arg, "--wait-pid="))
 		case arg == "--updated":
 			justUpdated = true
+		case arg == "--dev":
+			devMode = true
 		case command == "":
 			command = arg
 		}
+	}
+	if devMode {
+		selfInstall = false // нет шага «Программа» в мастере: себя не копирует и пункт меню не создаёт
+	}
+	if command != "" {
+		restoreHostEnv() // окно возвращает его после запуска GTK (runGUI)
 	}
 	switch command {
 	case "":
@@ -59,13 +82,13 @@ func main() {
 	case "install-driver":
 		err := installDriver(cliLog)
 		if err == nil && steamVRNeedsRestart() {
-			message("SteamVR уже запущен — перезапустите его, чтобы трекеры появились.")
+			message(T("SteamVR уже запущен — перезапустите его, чтобы трекеры появились."))
 		}
 		exit(err)
 	case "uninstall":
 		exit(uninstall(cliLog))
 	default:
-		fmt.Fprintln(os.Stderr, "использование: picotrackers [setup|stop|install-driver|uninstall]")
+		fmt.Fprintln(os.Stderr, T("использование: picotrackers [--dev] [setup|stop|install-driver|uninstall]"))
 		os.Exit(2)
 	}
 }
@@ -113,7 +136,7 @@ func cliSetup() error {
 		return err
 	}
 	if steamVRNeedsRestart() {
-		fmt.Println("! SteamVR запущен со старой версией драйвера — перезапустите SteamVR")
+		fmt.Println("!", T("SteamVR запущен со старой версией драйвера — перезапустите SteamVR"))
 	}
 	if adbPath() == "" {
 		if err := downloadPlatformTools(cliLog); err != nil {
@@ -123,7 +146,7 @@ func cliSetup() error {
 	cfg := loadConfig()
 	headset, err := connectHeadset(cfg)
 	if err != nil {
-		fmt.Println("! шлем не найден по adb — приложение на шлем не установлено")
+		fmt.Println("!", T("шлем не найден по adb — приложение на шлем не установлено"))
 		return nil
 	}
 	if appState(headset) != AppInstalled {
@@ -131,17 +154,18 @@ func cliSetup() error {
 			return err
 		}
 	}
+	allowBackgroundCalibration(headset)
 	if !headset.OverWifi() {
 		headset = switchToWifi(headset, cfg, cliLog)
 	}
 	if cfg.ServiceOff {
-		fmt.Println("! сервис на шлеме выключен вами — включите его кнопкой «Включить сервис» в программе")
+		fmt.Println("!", T("сервис на шлеме выключен вами — включите его кнопкой «Включить сервис» в программе"))
 		return nil
 	}
 	if err := startService(headset); err != nil {
 		return err
 	}
-	cliLog("сервис на шлеме запущен: трекинг включится, когда SteamVR загрузит драйвер")
+	cliLog(T("сервис на шлеме запущен: трекинг включится, когда SteamVR загрузит драйвер"))
 	return nil
 }
 
@@ -157,6 +181,6 @@ func cliStop() error {
 	}
 	cfg.ServiceOff = true
 	cfg.save()
-	cliLog("сервис на шлеме выключен — сам он не включится, пока не нажмёте «Включить сервис» в программе")
+	cliLog(T("сервис на шлеме выключен — сам он не включится, пока не нажмёте «Включить сервис» в программе"))
 	return nil
 }

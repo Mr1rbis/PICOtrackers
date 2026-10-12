@@ -2,9 +2,12 @@
 //  * Packet        шлем → ПК:7788  — снимок скелета XR_BD_body_tracking, ~100 раз/с; пока трекеры PICO
 //                                    не подключены — только пакет состояния без суставов (joint_count = 0),
 //                                    5 раз/с: шлем на связи, но поз нет;
+//  * StatusPacket  шлем → ПК:7788  — состояние трекеров PICO: подключены ли, откалиброваны ли, заряд;
+//                                    раз в секунду, пока идёт трекинг (драйверы до 1.7 его пропускают);
 //  * ControlPacket ПК → шлем:7789  — драйвер раз в секунду просит данные (шлем сам начинает трекинг
-//                                    на адрес отправителя и останавливается, если просьбы прекратились);
-//  * программа на ПК ↔ драйвер по 127.0.0.1: команды «PTA1 tracking=1 rate=100 trackers=a,b» → :7788,
+//                                    на адрес отправителя и останавливается, если просьбы прекратились),
+//                                    по просьбе программы — открыть калибровку трекеров PICO на шлеме;
+//  * программа на ПК ↔ драйвер по 127.0.0.1: команды «PTA1 tracking=1 rate=100 trackers=a,b calibrate=N» → :7788,
 //    состояние драйвера и позы суставов (JSON) → :7790 (программа pc/, Go).
 #pragma once
 
@@ -18,10 +21,12 @@ constexpr uint16_t kAppPort = 7790;
 constexpr char kMagic[4] = {'P', 'T', 'B', '1'};
 constexpr char kControlMagic[4] = {'P', 'T', 'C', '1'};
 constexpr char kAppMagic[4] = {'P', 'T', 'A', '1'};
+constexpr char kStatusMagic[4] = {'P', 'T', 'S', '1'};
 
 enum ControlCommand : uint16_t {
     kCommandHello = 1,  // нужны данные на data_port отправителя
     kCommandBye = 2,    // SteamVR закрывается — можно остановить трекинг сразу
+    kCommandCalibrate = 3,  // открыть на шлеме калибровку трекеров PICO; ControlPacket::request — номер просьбы
 };
 
 // Совпадает с XrBodyJointBD.
@@ -61,6 +66,29 @@ constexpr uint32_t kFlagTrackersReady = 1u << 1;     // трекеры подк�
 constexpr uint32_t kJointOrientationValid = 0x1;
 constexpr uint32_t kJointPositionValid = 0x2;
 
+// StatusPacket: состояние body tracking от рантайма (xrGetBodyTrackingStateBD) и трекеры PICO
+// (GetSwiftConnectState / GetSwiftTrackerBattery / GetSwiftCalibState из системной libtrackingclient.pxr.so). -1 — неизвестно.
+enum BodyTrackingStatus : int8_t {
+    kBodyStatusUnknown = -1,
+    kBodyStatusInvalid = 0,  // данных нет (трекеры не подключены или не откалиброваны — см. error)
+    kBodyStatusValid = 1,
+    kBodyStatusLimited = 2,  // данные есть, но неточные
+};
+enum BodyTrackingError : int8_t {  // BodyTrackingMessage из PICO SDK
+    kBodyErrorUnknown = -1,
+    kBodyErrorInner = 0,
+    kBodyErrorNotCalibrated = 1,     // трекеры не откалиброваны
+    kBodyErrorNotEnoughTrackers = 2, // подключено слишком мало трекеров
+    kBodyErrorTrackerState = 3,
+    kBodyErrorInvisible = 4,
+    kBodyErrorDataError = 5,
+    kBodyErrorUserChanged = 6,
+    kBodyErrorPoseError = 7,
+};
+constexpr int kMaxPicoTrackers = 12;
+constexpr uint8_t kTrackerCountUnknown = 0xff;
+constexpr int16_t kCalibrationNotRequested = -32768;
+
 #pragma pack(push, 1)
 struct JointPose {
     float position[3];     // метры, пространство STAGE шлема: y вверх, пол ≈ 0
@@ -81,12 +109,29 @@ struct ControlPacket {
     uint16_t data_port;
     uint16_t command;  // ControlCommand
     uint16_t rate_hz;  // сколько снимков в секунду слать (0 — не менять)
-    uint16_t reserved;
+    uint16_t request;  // kCommandCalibrate: номер просьбы (шлем выполняет каждую один раз), иначе 0
+};
+
+struct PicoTracker {
+    uint8_t id;      // номер трекера у PICO
+    int8_t battery;  // заряд, % (0–100); -1 — неизвестен
+};
+
+struct StatusPacket {
+    char magic[4];
+    int8_t body_status;     // BodyTrackingStatus
+    int8_t body_error;      // BodyTrackingError
+    int8_t calibrated;      // трекеры откалиброваны (libtrackingclient): 1 да, 0 нет, -1 неизвестно
+    uint8_t tracker_count;  // подключено трекеров PICO; kTrackerCountUnknown — неизвестно
+    PicoTracker trackers[kMaxPicoTrackers];
+    uint16_t calibration_request;  // последняя выполненная просьба откалибровать (ControlPacket::request)
+    int16_t calibration_result;    // ≥ 0 — калибровка открыта, < 0 — ошибка; kCalibrationNotRequested — просьб не было
 };
 #pragma pack(pop)
 
 static_assert(sizeof(JointPose) == 32, "protocol layout");
 static_assert(sizeof(Packet) == 24 + kJointCount * 32, "protocol layout");
 static_assert(sizeof(ControlPacket) == 12, "protocol layout");
+static_assert(sizeof(StatusPacket) == 36, "protocol layout");
 
 }  // namespace picotrackers

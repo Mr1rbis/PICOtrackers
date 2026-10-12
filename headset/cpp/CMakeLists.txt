@@ -14,8 +14,8 @@ set_target_properties(openxr_loader PROPERTIES
     IMPORTED_LOCATION "${PICO_OPENXR_DIR}/libs/android.arm64-v8a/libopenxr_loader.so"
     INTERFACE_INCLUDE_DIRECTORIES "${OPENXR_HEADERS_DIR}")
 
-add_library(picotrackers SHARED tracking.cpp)
+add_library(picotrackers SHARED tracking.cpp pico_trackers.cpp)
 target_include_directories(picotrackers PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../common")
 target_compile_options(picotrackers PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 target_link_options(picotrackers PRIVATE -s)
-target_link_libraries(picotrackers PRIVATE openxr_loader android log)
+target_link_libraries(picotrackers PRIVATE openxr_loader android log dl)

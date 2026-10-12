@@ -31,8 +31,11 @@ const (
 	adbWifiPort    = 5555
 	steamVRAppID   = 250820
 	driverName     = "picotrackers"
-	appVersion     = "1.6"
+	appVersion     = "1.7"
 	githubRepo     = "Mr1rbis/PICOtrackers" // релизы: обновление программы (update.go)
+
+	calibrationPackage = "com.pvr.swift"                 // приложение PICO «Motion Tracker»: калибровка трекеров
+	steamLinkPackage   = "com.valvesoftware.steamlinkvr" // после калибровки PICO возвращает в него
 )
 
 type tracker struct {
@@ -40,32 +43,32 @@ type tracker struct {
 	HasRole     bool // есть ли роль трекера в SteamVR
 }
 
-// Суставы скелета PICO в порядке драйвера (driver/src/driver.cpp, kTrackerSpecs).
+// Суставы скелета PICO в порядке драйвера (driver/src/driver.cpp, kTrackerSpecs). Label — по-русски, на экран — через T.
 var trackers = []tracker{
-	{"waist", "Пояс", true},
-	{"chest", "Грудь", true},
-	{"left_foot", "Левая стопа", true},
-	{"right_foot", "Правая стопа", true},
-	{"left_knee", "Левое колено", true},
-	{"right_knee", "Правое колено", true},
-	{"left_elbow", "Левый локоть", true},
-	{"right_elbow", "Правый локоть", true},
-	{"left_shoulder", "Левое плечо", true},
-	{"right_shoulder", "Правое плечо", true},
-	{"left_hip", "Левый тазобедренный сустав", false},
-	{"right_hip", "Правый тазобедренный сустав", false},
-	{"spine1", "Поясница", false},
-	{"spine2", "Середина спины", false},
-	{"left_toes", "Левый носок", false},
-	{"right_toes", "Правый носок", false},
-	{"neck", "Шея", false},
-	{"left_collar", "Левая ключица", false},
-	{"right_collar", "Правая ключица", false},
-	{"head", "Голова", false},
-	{"left_wrist", "Левое запястье", false},
-	{"right_wrist", "Правое запястье", false},
-	{"left_hand", "Левая кисть", false},
-	{"right_hand", "Правая кисть", false},
+	{"waist", N("Пояс"), true},
+	{"chest", N("Грудь"), true},
+	{"left_foot", N("Левая стопа"), true},
+	{"right_foot", N("Правая стопа"), true},
+	{"left_knee", N("Левое колено"), true},
+	{"right_knee", N("Правое колено"), true},
+	{"left_elbow", N("Левый локоть"), true},
+	{"right_elbow", N("Правый локоть"), true},
+	{"left_shoulder", N("Левое плечо"), true},
+	{"right_shoulder", N("Правое плечо"), true},
+	{"left_hip", N("Левый тазобедренный сустав"), false},
+	{"right_hip", N("Правый тазобедренный сустав"), false},
+	{"spine1", N("Поясница"), false},
+	{"spine2", N("Середина спины"), false},
+	{"left_toes", N("Левый носок"), false},
+	{"right_toes", N("Правый носок"), false},
+	{"neck", N("Шея"), false},
+	{"left_collar", N("Левая ключица"), false},
+	{"right_collar", N("Правая ключица"), false},
+	{"head", N("Голова"), false},
+	{"left_wrist", N("Левое запястье"), false},
+	{"right_wrist", N("Правое запястье"), false},
+	{"left_hand", N("Левая кисть"), false},
+	{"right_hand", N("Правая кисть"), false},
 }
 
 var legsTrackers = []string{"waist", "left_foot", "right_foot"}
@@ -100,6 +103,7 @@ type Config struct {
 	Rate       int       `json:"rate,omitempty"`     // снимков/с со шлема; 0 — по умолчанию
 	WizardDone bool      `json:"wizard_done,omitempty"`
 	ServiceOff bool      `json:"service_off,omitempty"` // сервис на шлеме выключен кнопкой — сами его не включаем
+	Language   string    `json:"language,omitempty"`    // "" — как в системе, "ru", "en"
 }
 
 const (
@@ -142,17 +146,29 @@ func writeIfChanged(path, content string) {
 
 // ---------- запуск команд ----------
 
+// command — внешняя команда без окна консоли (Windows).
+func command(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	hideConsole(cmd)
+	return cmd
+}
+
 // run запускает команду и возвращает stdout; при ненулевом коде — ошибку с выводом.
 func run(name string, args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(name, args...)
+	cmd := command(name, args...)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	hideConsole(cmd)
 	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("команда не удалась: %s %s\n%s%s", filepath.Base(name),
+		return stdout.String(), fmt.Errorf(T("команда не удалась: %s %s\n%s%s"), filepath.Base(name),
 			strings.Join(args, " "), stdout.String(), stderr.String())
 	}
 	return stdout.String(), nil
+}
+
+// runHost — команда системы, а не песочницы: во Flatpak — через flatpak-spawn --host (pgrep, vrpathreg).
+func runHost(name string, args ...string) (string, error) {
+	name, args = hostCommand(name, args...)
+	return run(name, args...)
 }
 
 func contains(list []string, s string) bool {
@@ -181,21 +197,21 @@ func adbPath() string {
 func adb(args ...string) (string, error) {
 	path := adbPath()
 	if path == "" {
-		return "", errors.New("не найден adb")
+		return "", errors.New(T("не найден adb"))
 	}
 	return run(path, args...)
 }
 
 // downloadPlatformTools скачивает Android platform-tools (adb) от Google в папку программы.
 func downloadPlatformTools(log logFunc) error {
-	log("скачиваю Android platform-tools (adb)…")
+	log(T("скачиваю Android platform-tools (adb)…"))
 	response, err := http.Get(platformToolsURL)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("загрузка adb: %s", response.Status)
+		return fmt.Errorf(T("загрузка adb: %s"), response.Status)
 	}
 	data, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -228,7 +244,7 @@ func downloadPlatformTools(log logFunc) error {
 			return err
 		}
 	}
-	log("adb установлен: " + filepath.Join(dataDir(), "platform-tools"))
+	log(Tf("adb установлен: %s", filepath.Join(dataDir(), "platform-tools")))
 	return nil
 }
 
@@ -280,7 +296,7 @@ func usbHeadset() (serial, state string) {
 // connectHeadset находит шлем без установки чего-либо: сохранённый Wi-Fi адрес, иначе USB.
 func connectHeadset(cfg *Config) (*Headset, error) {
 	if adbPath() == "" {
-		return nil, errors.New("не найден adb — установите его в мастере установки")
+		return nil, errors.New(T("не найден adb — установите его в мастере установки"))
 	}
 	devices := adbDevices()
 	if cfg.AdbWifi != "" && devices[cfg.AdbWifi] != "device" {
@@ -293,7 +309,7 @@ func connectHeadset(cfg *Config) (*Headset, error) {
 	if serial, state := usbHeadset(); state == "device" {
 		return &Headset{serial}, nil
 	}
-	return nil, errors.New("шлем не найден по adb")
+	return nil, errors.New(T("шлем не найден по adb"))
 }
 
 // switchToWifi: adb tcpip — после этого кабель можно отключить (до перезагрузки шлема).
@@ -310,11 +326,11 @@ func switchToWifi(h *Headset, cfg *Config, log logFunc) *Headset {
 		if adbDevices()[address] == "device" {
 			cfg.AdbWifi = address
 			cfg.save()
-			log("adb по Wi-Fi: " + address + " — USB-кабель можно отключить")
+			log(Tf("adb по Wi-Fi: %s — USB-кабель можно отключить", address))
 			return &Headset{address}
 		}
 	}
-	log("не удалось переключить adb на Wi-Fi, работаю по USB")
+	log(T("не удалось переключить adb на Wi-Fi, работаю по USB"))
 	return h
 }
 
@@ -355,7 +371,7 @@ func appState(h *Headset) AppState {
 func installApp(h *Headset, log logFunc) error {
 	data, err := apkData()
 	if err != nil {
-		return errors.New("в программу не вшито приложение для шлема — пересоберите её через build.sh")
+		return errors.New(T("в программу не вшито приложение для шлема — пересоберите её через build.sh"))
 	}
 	return installAPK(h, data, log)
 }
@@ -369,14 +385,14 @@ func installAPK(h *Headset, data []byte, log logFunc) error {
 	defer os.Remove(file.Name())
 	file.Write(data)
 	file.Close()
-	log("устанавливаю приложение на шлем…")
+	log(T("устанавливаю приложение на шлем…"))
 	if _, err := h.Adb("install", "-r", file.Name()); err != nil {
 		// На шлеме приложение, подписанное другим ключом (собрано у себя, а программа — из релиза на GitHub,
 		// или наоборот): поверх его не обновить, только удалить и поставить заново. Хранимых настроек у него нет.
 		if !strings.Contains(err.Error(), "INSTALL_FAILED_UPDATE_INCOMPATIBLE") {
 			return err
 		}
-		log("приложение на шлеме подписано другим ключом — переустанавливаю")
+		log(T("приложение на шлеме подписано другим ключом — переустанавливаю"))
 		if _, err := h.Adb("uninstall", headsetPackage); err != nil {
 			return err
 		}
@@ -384,8 +400,32 @@ func installAPK(h *Headset, data []byte, log logFunc) error {
 			return err
 		}
 	}
-	log("приложение на шлеме установлено")
+	log(T("приложение на шлеме установлено"))
+	allowBackgroundCalibration(h)
 	return nil
+}
+
+// allowBackgroundCalibration — разрешение «поверх других окон» приложению на шлеме: без него Android 10
+// не даёт фоновому сервису открыть калибровку трекеров PICO (окно другого приложения).
+func allowBackgroundCalibration(h *Headset) {
+	h.Shell("appops set " + headsetPackage + " SYSTEM_ALERT_WINDOW allow")
+}
+
+// launchCalibrationApp открывает на шлеме приложение калибровки трекеров PICO (adb может запускать окна
+// всегда, в отличие от фонового сервиса). После калибровки PICO вернёт пользователя в Steam Link.
+func launchCalibrationApp(h *Headset) error {
+	out, err := h.Shell("cmd package resolve-activity --brief -a android.intent.action.MAIN " +
+		"-c android.intent.category.LAUNCHER " + calibrationPackage)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	component := strings.TrimSpace(lines[len(lines)-1])
+	if err != nil || !strings.HasPrefix(component, calibrationPackage+"/") {
+		return fmt.Errorf(T("на шлеме нет приложения калибровки PICO (%s)"), calibrationPackage)
+	}
+	out, err = h.Shell("am start -n " + component + " --es enter_flag " + steamLinkPackage)
+	if err == nil && strings.Contains(out, "Error") {
+		err = errors.New(out)
+	}
+	return err
 }
 
 // startService запускает сервис в авторежиме: он ждёт просьбу драйвера SteamVR и сам включает трекинг.
@@ -469,9 +509,8 @@ func (f *LogcatFollower) stopped() bool {
 
 func (f *LogcatFollower) run() {
 	for !f.stopped() {
-		cmd := exec.Command(adbPath(), "-s", f.headset.Serial, "logcat", "-T", "1", "-v", "brief",
+		cmd := command(adbPath(), "-s", f.headset.Serial, "logcat", "-T", "1", "-v", "brief",
 			"PicoTrackers:I", "*:S")
-		hideConsole(cmd)
 		out, err := cmd.StdoutPipe()
 		if err == nil && cmd.Start() == nil {
 			f.mu.Lock()
@@ -528,7 +567,7 @@ type openVRPaths map[string]any
 func readOpenVRPaths() (openVRPaths, error) {
 	data, err := os.ReadFile(openVRPathsFile())
 	if err != nil {
-		return nil, fmt.Errorf("SteamVR не найден (нет %s) — установите SteamVR и запустите его хотя бы раз",
+		return nil, fmt.Errorf(T("SteamVR не найден (нет %s) — установите SteamVR и запустите его хотя бы раз"),
 			openVRPathsFile())
 	}
 	var p openVRPaths
@@ -565,9 +604,13 @@ func (s DriverState) Ready() bool {
 func driverVersionFile() string { return filepath.Join(driverInstallDir(), "version.txt") }
 
 // isOurDriver — папка зарегистрированного драйвера с именем picotrackers (старые установки, сборки из исходников).
+// Папку не прочитать (её удалили или она не видна из песочницы Flatpak) — судим по имени.
 func isOurDriver(dir string) bool {
 	data, err := os.ReadFile(filepath.Join(dir, "driver.vrdrivermanifest"))
-	return err == nil && strings.Contains(string(data), `"name": "`+driverName+`"`)
+	if err != nil {
+		return filepath.Base(filepath.Clean(dir)) == driverName
+	}
+	return strings.Contains(string(data), `"name": "`+driverName+`"`)
 }
 
 func driverState() DriverState {
@@ -601,7 +644,7 @@ func installDriver(log logFunc) error {
 		return errSteamVRRunning
 	}
 
-	log("копирую драйвер в " + driverInstallDir())
+	log(Tf("копирую драйвер в %s", driverInstallDir()))
 	err := fs.WalkDir(assets, assetsDriver, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -617,7 +660,7 @@ func installDriver(log logFunc) error {
 		return replaceFile(target, data, 0o755)
 	})
 	if err != nil {
-		return fmt.Errorf("копирование драйвера: %w", err)
+		return fmt.Errorf(T("копирование драйвера: %w"), err)
 	}
 	if err := os.WriteFile(driverVersionFile(), []byte(driverAssetsVersion()+"\n"), 0o644); err != nil {
 		return err
@@ -626,7 +669,7 @@ func installDriver(log logFunc) error {
 	if err := registerDriver(driverInstallDir(), log); err != nil {
 		return err
 	}
-	log("драйвер зарегистрирован в SteamVR")
+	log(T("драйвер зарегистрирован в SteamVR"))
 	return nil
 }
 
@@ -651,14 +694,14 @@ func registerDriver(keep string, log logFunc) error {
 	for _, dir := range paths.list("external_drivers") {
 		registered = registered || isKeep(dir)
 		if stale(dir) {
-			log("снимаю регистрацию драйвера: " + dir)
+			log(Tf("снимаю регистрацию драйвера: %s", dir))
 			if vrpathreg != "" {
-				run(vrpathreg, "removedriver", dir)
+				runHost(vrpathreg, "removedriver", dir)
 			}
 		}
 	}
 	if keep != "" && !registered && vrpathreg != "" {
-		run(vrpathreg, "adddriver", keep)
+		runHost(vrpathreg, "adddriver", keep)
 	}
 
 	if paths, err = readOpenVRPaths(); err != nil {
@@ -693,7 +736,14 @@ type ProgramState struct {
 }
 
 // errSteamVRRunning — на Windows загруженную SteamVR DLL драйвера нельзя ни заменить, ни удалить.
-var errSteamVRRunning = errors.New("закройте SteamVR: Windows не даёт заменить или удалить загруженный драйвер")
+// Текст — на языке интерфейса, который известен только после запуска, поэтому это тип, а не errors.New.
+var errSteamVRRunning error = steamVRRunningError{}
+
+type steamVRRunningError struct{}
+
+func (steamVRRunningError) Error() string {
+	return T("закройте SteamVR: Windows не даёт заменить или удалить загруженный драйвер")
+}
 
 // uninstall — для деинсталлятора и кнопки «Удалить программу» (Linux): снимает драйвер с регистрации
 // в SteamVR и удаляет его, выключает автозапуск, удаляет программу из меню и ~/.local/bin, её данные
@@ -707,13 +757,15 @@ func uninstall(log logFunc) error {
 			return err
 		}
 	}
-	setAutostart(false)
-	removeProgramFiles()
+	if !devMode { // своя сборка (--dev) не трогает автозапуск и установленную программу с её пунктом меню
+		setAutostart(false)
+		removeProgramFiles()
+	}
 	// Свой adb-сервер держит файлы platform-tools открытыми — на Windows их иначе не удалить.
 	if adb := adbPath(); strings.HasPrefix(adb, dataDir()) {
 		run(adb, "kill-server")
 	}
-	log("удаляю " + dataDir())
+	log(Tf("удаляю %s", dataDir()))
 	if err := os.RemoveAll(dataDir()); err != nil {
 		return err
 	}

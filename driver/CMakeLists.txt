@@ -40,5 +40,6 @@ else()
     target_link_libraries(driver_picotrackers PRIVATE pthread)
 endif()
 
-add_custom_command(TARGET driver_picotrackers POST_BUILD
+# Файлы пакета (манифест, настройки, иконки) копируются при каждой сборке — и когда сам драйвер не менялся.
+add_custom_target(driver_package ALL
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/package" "${DRIVER_ROOT}")

@@ -6,9 +6,11 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.wifi.WifiManager;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.Log;
 
 import java.io.IOException;
@@ -26,6 +28,8 @@ import java.nio.ByteOrder;
  * Интент с EXTRA_HOST включает трекинг вручную (для отладки без SteamVR), интент без него — авторежим.
  * EXTRA_ENABLED — выбор пользователя (кнопка на шлеме или в программе на ПК): false — выключить сервис и не
  * запускать его самому (при включении шлема, открытии приложения), пока не включат снова (true).
+ * Просьба драйвера «откалибровать трекеры» (команда 3) открывает калибровку трекеров PICO. Раз в 5 с сервис
+ * опрашивает трекеры PICO (подключение, заряд, калибровка — pico_trackers.cpp), а поток трекинга отправляет это на ПК.
  */
 public class TrackingService extends Service {
     static final String TAG = "PicoTrackers";
@@ -37,15 +41,25 @@ public class TrackingService extends Service {
     private static final long HELLO_TIMEOUT_MS = 5000;
     private static final int COMMAND_HELLO = 1;
     private static final int COMMAND_BYE = 2;
+    private static final int COMMAND_CALIBRATE = 3;
+    /** Приложение PICO «Motion Tracker»: в нём калибруют трекеры. */
+    static final String CALIBRATION_PACKAGE = "com.pvr.swift";
+    private static final String STEAM_LINK_PACKAGE = "com.valvesoftware.steamlinkvr";
+    private static final long TRACKERS_POLL_MS = 5000;
+    // Опрос libtrackingclient.pxr.so застрахован: перед первым вызовом ставим метку, после — снимаем.
+    // Осталась после перезапуска — процесс упал на вызове; для этой версии приложения опрос выключается.
+    private static final String PREF_PXR_PROBING = "pxr_probing";
+    private static final String PREF_PXR_CRASHED = "pxr_crashed_version";
     private static final String CHANNEL = "tracking";
     private static final String PREFS = "service";
     private static final String PREF_DISABLED = "disabled";
 
-    private static volatile String state = "сервис не запущен";
+    private static volatile String state = L.t("Сервис не запущен", "Service is not running");
 
     private WifiManager.WifiLock wifiLock;
     private WifiManager.MulticastLock multicastLock;
     private Thread listener;
+    private Thread trackersPoller;
     private volatile DatagramSocket socket;
     private volatile boolean running;
 
@@ -53,6 +67,7 @@ public class TrackingService extends Service {
     private String target;  // "ip:port", null — трекинг выключен
     private boolean manual;
     private long lastHello;
+    private int lastCalibrationRequest = -1;
 
     /** Состояние для окна приложения. */
     static String state() {
@@ -72,10 +87,11 @@ public class TrackingService extends Service {
     @SuppressWarnings("deprecation")  // WIFI_MODE_FULL_LOW_LATENCY работает только на переднем плане
     public void onCreate() {
         super.onCreate();
+        Native.setRussian(L.RU);
         getSystemService(NotificationManager.class).createNotificationChannel(
-                new NotificationChannel(CHANNEL, "Трекинг", NotificationManager.IMPORTANCE_LOW));
-        startForeground(1, notification("Ждёт SteamVR"));
-        state = "Ждёт SteamVR";
+                new NotificationChannel(CHANNEL, L.t("Трекинг", "Tracking"), NotificationManager.IMPORTANCE_LOW));
+        startForeground(1, notification(waitingText()));
+        state = waitingText();
 
         // Без WifiLock Wi-Fi уходит в энергосбережение и пакеты приходят пачками;
         // без MulticastLock часть прошивок отбрасывает широковещательные просьбы драйвера.
@@ -88,6 +104,8 @@ public class TrackingService extends Service {
         running = true;
         listener = new Thread(this::listen, "picotrackers-listener");
         listener.start();
+        trackersPoller = new Thread(this::pollTrackers, "picotrackers-trackers");
+        trackersPoller.start();
     }
 
     @Override
@@ -105,7 +123,7 @@ public class TrackingService extends Service {
         synchronized (this) {
             if (host != null && !host.isEmpty()) {
                 manual = true;
-                startTracking(host, intent.getIntExtra(EXTRA_PORT, DEFAULT_PORT), "вручную");
+                startTracking(host, intent.getIntExtra(EXTRA_PORT, DEFAULT_PORT), "manual");
             } else if (manual) {
                 manual = false;  // назад в авторежим: без просьб SteamVR трекинг остановится по таймауту
                 lastHello = 0;
@@ -119,16 +137,17 @@ public class TrackingService extends Service {
         running = false;
         DatagramSocket s = socket;
         if (s != null) s.close();
+        trackersPoller.interrupt();
         try {
             listener.join();
         } catch (InterruptedException ignored) {
         }
         synchronized (this) {
-            stopTracking("сервис остановлен");
+            stopTracking("service stopped");
         }
         wifiLock.release();
         multicastLock.release();
-        state = "Сервис остановлен";
+        state = L.t("Сервис остановлен", "Service stopped");
         Log.i(TAG, "listener: service stopped");  // по этой строке программа на ПК видит, что сервис выключен
         super.onDestroy();
     }
@@ -169,6 +188,15 @@ public class TrackingService extends Service {
         int port = b.getShort() & 0xffff;
         int command = b.getShort() & 0xffff;
         int rate = packet.getLength() >= 10 ? b.getShort() & 0xffff : 0;
+        int request = packet.getLength() >= 12 ? b.getShort() & 0xffff : 0;
+        if (command == COMMAND_CALIBRATE) {
+            // Драйвер шлёт просьбу на broadcast и на адрес шлема — выполняем каждую один раз.
+            if (request != lastCalibrationRequest) {
+                lastCalibrationRequest = request;
+                calibrate(request);
+            }
+            return;
+        }
         if (manual) return;
         if (command == COMMAND_HELLO && rate > 0) Native.setRate(rate);
 
@@ -176,15 +204,15 @@ public class TrackingService extends Service {
         if (command == COMMAND_HELLO) {
             lastHello = SystemClock.elapsedRealtime();
             if (!from.equals(target) || !Native.running())
-                startTracking(packet.getAddress().getHostAddress(), port, "SteamVR просит данные");
+                startTracking(packet.getAddress().getHostAddress(), port, "SteamVR asks for data");
         } else if (command == COMMAND_BYE && from.equals(target)) {
-            stopTracking("SteamVR закрылся");
+            stopTracking("SteamVR closed");
         }
     }
 
     private synchronized void checkTimeout() {
         if (!manual && target != null && SystemClock.elapsedRealtime() - lastHello > HELLO_TIMEOUT_MS)
-            stopTracking("SteamVR не отвечает " + HELLO_TIMEOUT_MS / 1000 + " с");
+            stopTracking("no requests from SteamVR for " + HELLO_TIMEOUT_MS / 1000 + " s");
     }
 
     private void startTracking(String host, int port, String reason) {
@@ -192,7 +220,7 @@ public class TrackingService extends Service {
         Native.start(getApplicationContext(), host, port);
         target = host + ":" + port;
         Log.i(TAG, "listener: tracking -> " + target + " (" + reason + ")");
-        setState("Передаёт трекинг → " + target + (manual ? " (вручную)" : ""));
+        setState(L.t("Передаёт трекинг → ", "Sending tracking → ") + target + (manual ? L.t(" (вручную)", " (manual)") : ""));
     }
 
     private void stopTracking(String reason) {
@@ -201,7 +229,81 @@ public class TrackingService extends Service {
         Log.i(TAG, "listener: tracking stopped (" + reason + ")");
         target = null;
         manual = false;
-        setState("Ждёт SteamVR");
+        setState(waitingText());
+    }
+
+    private static String waitingText() {
+        return L.t("Ждёт SteamVR", "Waiting for SteamVR");
+    }
+
+    /**
+     * Открыть калибровку трекеров PICO (просьба программы на ПК через драйвер): сначала через рантайм OpenXR,
+     * иначе — запуском приложения калибровки. Итог уходит на ПК в пакете состояния:
+     * 0 — открыл рантайм, 1 — запущено приложение, 2 — запущено, но фоновый запуск окон может быть
+     * запрещён (нет разрешения «поверх других окон»), < 0 — не получилось.
+     */
+    private void calibrate(int request) {
+        int runtime = Native.startCalibration();
+        int result;
+        if (runtime >= 0) {
+            result = 0;
+        } else if (launchCalibrationApp(this)) {
+            result = Settings.canDrawOverlays(this) ? 1 : 2;
+        } else {
+            result = runtime;
+        }
+        Native.setCalibrationResult(request, result);
+        Log.i(TAG, "calibration: request " + request + " -> " + result + " (runtime " + runtime + ")");
+    }
+
+    /** Запускает приложение калибровки трекеров; после неё оно вернёт пользователя в Steam Link, если тот есть. */
+    static boolean launchCalibrationApp(Context context) {
+        Intent intent = context.getPackageManager().getLaunchIntentForPackage(CALIBRATION_PACKAGE);
+        if (intent == null) return false;
+        boolean steamLink = context.getPackageManager().getLaunchIntentForPackage(STEAM_LINK_PACKAGE) != null;
+        intent.putExtra("enter_flag", steamLink ? STEAM_LINK_PACKAGE : context.getPackageName());
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            context.startActivity(intent);
+            return true;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "calibration app: " + e);
+            return false;
+        }
+    }
+
+    /** Раз в 5 с: подключённые трекеры PICO, их заряд и калибровка (libtrackingclient.pxr.so). */
+    private void pollTrackers() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        int version = versionCode();
+        if (prefs.getBoolean(PREF_PXR_PROBING, false)) {
+            Log.w(TAG, "pxr: the process crashed while polling PICO trackers last time, polling disabled");
+            prefs.edit().remove(PREF_PXR_PROBING).putInt(PREF_PXR_CRASHED, version).commit();
+        }
+        if (prefs.getInt(PREF_PXR_CRASHED, -1) == version) return;
+
+        prefs.edit().putBoolean(PREF_PXR_PROBING, true).commit();
+        boolean available = Native.pollPicoTrackers();
+        prefs.edit().remove(PREF_PXR_PROBING).commit();
+        if (!available) return;
+        Log.i(TAG, "pxr: polling PICO trackers every " + TRACKERS_POLL_MS / 1000 + " s");
+        while (running) {
+            try {
+                Thread.sleep(TRACKERS_POLL_MS);
+            } catch (InterruptedException e) {
+                return;
+            }
+            Native.pollPicoTrackers();
+        }
+    }
+
+    @SuppressWarnings("deprecation")  // getLongVersionCode — с API 28, versionCode хватает
+    private int versionCode() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private void setState(String text) {

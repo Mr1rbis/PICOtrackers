@@ -69,7 +69,7 @@ func checkForUpdate() (*Release, error) {
 		return nil, nil // релизов ещё нет
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub ответил %s", response.Status)
+		return nil, fmt.Errorf(T("GitHub ответил %s"), response.Status)
 	}
 	var latest struct {
 		Tag    string         `json:"tag_name"`
@@ -95,7 +95,7 @@ func checkForUpdate() (*Release, error) {
 		}
 	}
 	if r.program.URL == "" || r.apk.URL == "" || r.sums.URL == "" {
-		return nil, fmt.Errorf("в релизе %s нет файлов для этой системы", latest.Tag)
+		return nil, fmt.Errorf(T("в релизе %s нет файлов для этой системы"), latest.Tag)
 	}
 	return r, nil
 }
@@ -156,9 +156,9 @@ func (c UpdateConditions) Met() bool { return !c.SteamVRRunning && c.State == "d
 func (c UpdateConditions) err() error {
 	switch {
 	case c.SteamVRRunning:
-		return errors.New("SteamVR запущен — закройте его")
+		return errors.New(T("SteamVR запущен — закройте его"))
 	case c.State != "device":
-		return errors.New("шлем не подключён кабелем — подключите его и разрешите отладку по USB")
+		return errors.New(T("шлем не подключён кабелем — подключите его и разрешите отладку по USB"))
 	}
 	return nil
 }
@@ -173,17 +173,17 @@ func (r *Release) Install(log, progress func(string)) (restart func() error, err
 	if err := updateConditions().err(); err != nil {
 		return nil, err
 	}
-	log("скачиваю обновление " + r.Version)
+	log(Tf("скачиваю обновление %s", r.Version))
 	sumsData, err := download(r.sums, nil)
 	if err != nil {
 		return nil, err
 	}
 	sums := parseSums(sumsData)
-	program, err := downloadVerified(r.program, sums, "программа", progress)
+	program, err := downloadVerified(r.program, sums, T("программа"), progress)
 	if err != nil {
 		return nil, err
 	}
-	apk, err := downloadVerified(r.apk, sums, "приложение для шлема", progress)
+	apk, err := downloadVerified(r.apk, sums, T("приложение для шлема"), progress)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func (r *Release) Install(log, progress func(string)) (restart func() error, err
 			return nil, err
 		}
 	} else {
-		log("приложение на шлеме уже этой версии")
+		log(T("приложение на шлеме уже этой версии"))
 	}
 	return installUpdate(r.program.Name, program, log)
 }
@@ -206,17 +206,17 @@ func (r *Release) Install(log, progress func(string)) (restart func() error, err
 // downloadVerified скачивает файл релиза и сверяет его sha256 с SHA256SUMS.txt.
 func downloadVerified(a releaseAsset, sums map[string]string, what string, progress func(string)) ([]byte, error) {
 	data, err := download(a, func(done, total int64) {
-		progress(fmt.Sprintf("Скачиваю: %s — %.1f из %.1f МБ", what, float64(done)/1e6, float64(total)/1e6))
+		progress(Tf("Скачиваю: %s — %.1f из %.1f МБ", what, float64(done)/1e6, float64(total)/1e6))
 	})
 	if err != nil {
 		return nil, err
 	}
 	want := sums[a.Name]
 	if want == "" {
-		return nil, fmt.Errorf("%s нет в %s", a.Name, sumsAsset)
+		return nil, fmt.Errorf(T("%s нет в %s"), a.Name, sumsAsset)
 	}
 	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != want {
-		return nil, fmt.Errorf("%s скачан с ошибкой: не совпала контрольная сумма", a.Name)
+		return nil, fmt.Errorf(T("%s скачан с ошибкой: не совпала контрольная сумма"), a.Name)
 	}
 	return data, nil
 }
@@ -245,7 +245,7 @@ func download(a releaseAsset, progress func(done, total int64)) ([]byte, error) 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("загрузка %s: %s", a.Name, response.Status)
+		return nil, fmt.Errorf(T("загрузка %s: %s"), a.Name, response.Status)
 	}
 	total := response.ContentLength
 	if total <= 0 {
@@ -265,7 +265,7 @@ func download(a releaseAsset, progress func(done, total int64)) ([]byte, error) 
 			return data.Bytes(), nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("загрузка %s: %w", a.Name, err)
+			return nil, fmt.Errorf(T("загрузка %s: %w"), a.Name, err)
 		}
 	}
 }

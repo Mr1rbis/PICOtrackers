@@ -34,6 +34,8 @@ func runGUI() int {
 	app := adw.NewApplication(appID, gio.ApplicationDefaultFlags)
 	var w *window
 	app.ConnectStartup(func() {
+		initGTKFromEnv()
+		restoreHostEnv()
 		provider := gtk.NewCSSProvider()
 		provider.LoadFromString(css)
 		gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), provider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -64,8 +66,14 @@ func setupIcon() {
 	}
 	dir := filepath.Join(cache, "picotrackers", "icons")
 	writeIfChanged(filepath.Join(dir, appID+".svg"), appIcon)
-	gtk.IconThemeGetForDisplay(gdk.DisplayGetDefault()).AddSearchPath(dir)
+	theme := gtk.IconThemeGetForDisplay(gdk.DisplayGetDefault())
+	theme.AddSearchPath(dir)
 	gtk.WindowSetDefaultIconName(appID)
+	// Тема значков из настроек системы может не знать значков окна или её может не быть (AppImage на системе
+	// без этой темы) — тогда Adwaita: она есть всегда (у AppImage — своя).
+	if !theme.HasIcon("avatar-default-symbolic") {
+		gtk.SettingsGetDefault().SetObjectProperty("gtk-icon-theme-name", "Adwaita")
+	}
 }
 
 // trackerControl — переключатель трекера: строка-список (дополнительные суставы) или строка на схеме.
@@ -89,9 +97,10 @@ type window struct {
 	serviceMenuLabel             string
 	serviceAction                *gio.SimpleAction
 	headsetRow, steamVRRow       *adw.ActionRow
-	calibrationRow               *adw.ActionRow
+	picoRow, calibrationRow      *adw.ActionRow
 	headsetDot, steamVRDot       *gtk.Label
-	calibrationDot               *gtk.Label
+	picoDot, calibrationDot      *gtk.Label
+	calibrateButton              *gtk.Button
 	trackingSwitch               *adw.SwitchRow
 	rateRow                      *adw.SpinRow
 	body                         *bodyDiagram
@@ -108,9 +117,12 @@ type window struct {
 }
 
 func newWindow(app *adw.Application) *window {
-	w := &window{app: app, controls: map[string]trackerControl{}, serviceMenuLabel: serviceMenuUnknown}
+	w := &window{app: app, controls: map[string]trackerControl{}, serviceMenuLabel: T(serviceMenuUnknown)}
 	w.win = adw.NewApplicationWindow(&app.Application)
 	w.win.SetTitle("PICO Trackers")
+	if devMode {
+		w.win.SetTitle("PICO Trackers (dev)") // не перепутать с установленной версией
+	}
 	w.win.SetDefaultSize(640, 940)
 
 	w.stack = adw.NewViewStack()
@@ -120,14 +132,14 @@ func newWindow(app *adw.Application) *window {
 	switcher.SetPolicy(adw.ViewSwitcherPolicyWide)
 	header.SetTitleWidget(switcher)
 	menu := gio.NewMenu()
-	menu.Append("Мастер установки", "app.wizard")
+	menu.Append(T("Мастер установки"), "app.wizard")
 	menu.Append(w.serviceMenuLabel, "app.toggle-service") // надпись меняет refreshService
-	menu.Append("О программе", "app.about")
+	menu.Append(T("О программе"), "app.about")
 	w.menu = menu
 	menuButton := gtk.NewMenuButton()
 	menuButton.SetIconName("open-menu-symbolic")
 	menuButton.SetMenuModel(menu)
-	menuButton.SetTooltipText("Меню")
+	menuButton.SetTooltipText(T("Меню"))
 	header.PackEnd(menuButton)
 
 	w.toasts = adw.NewToastOverlay()
@@ -139,8 +151,8 @@ func newWindow(app *adw.Application) *window {
 
 	c, err := NewController(w.logFromThread, w.toastFromThread)
 	if err != nil {
-		dialog := adw.NewAlertDialog("Не удалось запустить", err.Error())
-		dialog.AddResponse("close", "Закрыть")
+		dialog := adw.NewAlertDialog(T("Не удалось запустить"), err.Error())
+		dialog.AddResponse("close", T("Закрыть"))
 		dialog.ConnectResponse(func(string) { app.Quit() })
 		w.win.Present()
 		dialog.Present(w.win)
@@ -154,34 +166,39 @@ func newWindow(app *adw.Application) *window {
 	trackersPage.Add(w.buildTracking())
 	trackersPage.Add(w.buildBody())
 	trackersPage.Add(w.buildExtra())
-	w.stack.AddTitledWithIcon(trackersPage, "trackers", "Трекеры", "avatar-default-symbolic")
+	w.stack.AddTitledWithIcon(trackersPage, "trackers", T("Трекеры"), "avatar-default-symbolic")
 
 	w.view3d = newView3D(c, w.enabledTrackers)
-	w.stack.AddTitledWithIcon(w.view3d.widget, "view3d", "3D-вид", "object-rotate-right-symbolic")
+	w.stack.AddTitledWithIcon(w.view3d.widget, "view3d", T("3D-вид"), "object-rotate-right-symbolic")
 
 	settingsPage := adw.NewPreferencesPage()
 	settingsPage.Add(w.buildApp())
 	settingsPage.Add(w.buildLog())
-	w.stack.AddTitledWithIcon(settingsPage, "settings", "Настройки", "preferences-system-symbolic")
+	w.stack.AddTitledWithIcon(settingsPage, "settings", T("Настройки"), "preferences-system-symbolic")
 	w.addActions()
 
 	w.win.Present()
 	w.refresh()
 	if justUpdated {
-		w.toasts.AddToast(adw.NewToast("PICO Trackers обновлена до версии " + appVersion))
-		w.logFromThread("программа обновлена до версии " + appVersion)
+		w.toasts.AddToast(adw.NewToast(Tf("PICO Trackers обновлена до версии %s", appVersion)))
+		w.logFromThread(Tf("программа обновлена до версии %s", appVersion))
 	}
 	// При каждом запуске: есть новая версия — окно обновления (оно обновит и драйвер, и приложение на шлеме),
-	// иначе, если нужно, мастер установки.
+	// иначе, если нужно, мастер установки. Своя сборка (--dev) обновления не ищет.
 	go func() {
-		os.RemoveAll(updateDir())
-		release, err := checkForUpdate()
-		if err != nil {
-			w.logFromThread("не удалось проверить обновления: " + err.Error())
+		var release *Release
+		if devMode {
+			w.logFromThread(T("режим --dev: обновления не проверяются, в меню, автозапуск и ~/.local/bin программа себя не ставит"))
+		} else {
+			os.RemoveAll(updateDir())
+			var err error
+			if release, err = checkForUpdate(); err != nil {
+				w.logFromThread(T("не удалось проверить обновления: ") + err.Error())
+			}
 		}
 		switch {
 		case release != nil:
-			w.logFromThread("доступна новая версия " + release.Version)
+			w.logFromThread(Tf("доступна новая версия %s", release.Version))
 			glib.IdleAdd(func() { w.setUpdate(release) })
 		case wizardNeeded():
 			glib.IdleAdd(w.openWizard)
@@ -218,7 +235,7 @@ func setDot(label *gtk.Label, class string) {
 func statusRow(group *adw.PreferencesGroup, title string) (*adw.ActionRow, *gtk.Label) {
 	row := adw.NewActionRow()
 	row.SetTitle(title)
-	row.SetSubtitleLines(2)
+	row.SetSubtitleLines(3)
 	dot := newDot()
 	row.AddPrefix(dot)
 	group.Add(row)
@@ -250,7 +267,7 @@ func (w *window) buildHero() *adw.PreferencesGroup {
 	texts.Append(w.heroText)
 	box.Append(texts)
 
-	w.heroButton = gtk.NewButtonWithLabel("Запустить SteamVR")
+	w.heroButton = gtk.NewButtonWithLabel(T("Запустить SteamVR"))
 	w.heroButton.SetVAlign(gtk.AlignCenter)
 	w.heroButton.AddCSSClass("suggested-action")
 	w.heroButton.AddCSSClass("pill")
@@ -266,19 +283,26 @@ func (w *window) buildHero() *adw.PreferencesGroup {
 
 func (w *window) buildConnection() *adw.PreferencesGroup {
 	group := adw.NewPreferencesGroup()
-	group.SetTitle("Подключение")
-	w.headsetRow, w.headsetDot = statusRow(group, "Шлем PICO")
-	w.serviceButton = gtk.NewButtonWithLabel("Включить сервис")
+	group.SetTitle(T("Подключение"))
+	w.headsetRow, w.headsetDot = statusRow(group, T("Шлем PICO"))
+	w.serviceButton = gtk.NewButtonWithLabel(T("Включить сервис"))
 	w.serviceButton.SetVAlign(gtk.AlignCenter)
 	w.serviceButton.ConnectClicked(w.c.ToggleService)
 	w.serviceButton.SetVisible(false)
 	w.headsetRow.AddSuffix(w.serviceButton)
 	w.steamVRRow, w.steamVRDot = statusRow(group, "SteamVR")
-	w.steamVRButton = gtk.NewButtonWithLabel("Запустить")
+	w.steamVRButton = gtk.NewButtonWithLabel(T("Запустить"))
 	w.steamVRButton.SetVAlign(gtk.AlignCenter)
 	w.steamVRButton.ConnectClicked(w.launchSteamVR)
 	w.steamVRRow.AddSuffix(w.steamVRButton)
-	w.calibrationRow, w.calibrationDot = statusRow(group, "Калибровка")
+	w.picoRow, w.picoDot = statusRow(group, T("Трекеры PICO"))
+	w.calibrateButton = gtk.NewButtonWithLabel(T("Откалибровать"))
+	w.calibrateButton.SetVAlign(gtk.AlignCenter)
+	w.calibrateButton.AddCSSClass("suggested-action")
+	w.calibrateButton.ConnectClicked(w.c.CalibrateTrackers)
+	w.calibrateButton.SetVisible(false)
+	w.picoRow.AddSuffix(w.calibrateButton)
+	w.calibrationRow, w.calibrationDot = statusRow(group, T("Калибровка"))
 	return group
 }
 
@@ -286,9 +310,9 @@ func (w *window) buildTracking() *adw.PreferencesGroup {
 	s := w.c.Snapshot()
 	group := adw.NewPreferencesGroup()
 	w.trackingSwitch = adw.NewSwitchRow()
-	w.trackingSwitch.SetTitle("Передавать трекинг")
-	w.trackingSwitch.SetSubtitle("Выключите, чтобы временно убрать все трекеры — шлем перестанет отправлять данные. " +
-		"Драйвер помнит это и без программы")
+	w.trackingSwitch.SetTitle(T("Передавать трекинг"))
+	w.trackingSwitch.SetSubtitle(T("Выключите, чтобы временно убрать все трекеры — шлем перестанет отправлять данные. " +
+		"Драйвер помнит это и без программы"))
 	w.trackingSwitch.SetActive(s.Tracking)
 	w.trackingSwitch.NotifyProperty("active", func() {
 		if !w.updating {
@@ -298,8 +322,8 @@ func (w *window) buildTracking() *adw.PreferencesGroup {
 	group.Add(w.trackingSwitch)
 
 	w.rateRow = adw.NewSpinRowWithRange(minRate, maxRate, 10)
-	w.rateRow.SetTitle("Частота передачи")
-	w.rateRow.SetSubtitle("Снимков скелета в секунду: больше — плавнее, но выше нагрузка на Wi-Fi")
+	w.rateRow.SetTitle(T("Частота передачи"))
+	w.rateRow.SetSubtitle(T("Снимков скелета в секунду: больше — плавнее, но выше нагрузка на Wi-Fi"))
 	w.rateRow.SetValue(float64(s.Rate))
 	w.rateRow.NotifyProperty("value", func() { w.c.SetRate(int(w.rateRow.Value())) })
 	group.Add(w.rateRow)
@@ -308,18 +332,18 @@ func (w *window) buildTracking() *adw.PreferencesGroup {
 
 func (w *window) buildBody() *adw.PreferencesGroup {
 	group := adw.NewPreferencesGroup()
-	group.SetTitle("Трекеры")
-	group.SetDescription("Применяется сразу: включённый трекер появляется в SteamVR, выключенный отключается " +
-		"и пропадает из игр. Зелёный — отслеживается, оранжевый — нет позиции.")
+	group.SetTitle(T("Трекеры"))
+	group.SetDescription(T("Применяется сразу: включённый трекер появляется в SteamVR, выключенный отключается " +
+		"и пропадает из игр. Зелёный — отслеживается, оранжевый — нет позиции."))
 	presets := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	presets.AddCSSClass("linked")
 	presets.SetVAlign(gtk.AlignCenter)
 	for _, preset := range []struct {
 		label string
 		names []string
-	}{{"Ноги", legsTrackers}, {"Основные", mainTrackers()}, {"Все", allTrackers()}} {
+	}{{N("Ноги"), legsTrackers}, {N("Основные"), mainTrackers()}, {N("Все"), allTrackers()}} {
 		names := preset.names
-		button := gtk.NewButtonWithLabel(preset.label)
+		button := gtk.NewButtonWithLabel(T(preset.label))
 		button.ConnectClicked(func() {
 			w.setSwitches(names)
 			w.c.SetTrackers(names)
@@ -344,17 +368,17 @@ func (w *window) buildBody() *adw.PreferencesGroup {
 
 func (w *window) buildExtra() *adw.PreferencesGroup {
 	group := adw.NewPreferencesGroup()
-	group.SetTitle("Дополнительные суставы")
-	group.SetDescription("У них нет роли в SteamVR: игры вроде VRChat могут путать их с основными трекерами.")
+	group.SetTitle(T("Дополнительные суставы"))
+	group.SetDescription(T("У них нет роли в SteamVR: игры вроде VRChat могут путать их с основными трекерами."))
 	expander := adw.NewExpanderRow()
-	expander.SetTitle("Ещё 14 суставов")
-	expander.SetSubtitle("голова, кисти, шея, позвоночник, носки…")
+	expander.SetTitle(T("Ещё 14 суставов"))
+	expander.SetSubtitle(T("голова, кисти, шея, позвоночник, носки…"))
 	for _, t := range trackers {
 		if t.HasRole {
 			continue
 		}
 		row := adw.NewSwitchRow()
-		row.SetTitle(t.Label)
+		row.SetTitle(T(t.Label))
 		dot := newDot()
 		row.AddPrefix(dot)
 		row.NotifyProperty("active", func() {
@@ -378,17 +402,27 @@ func (w *window) buildExtra() *adw.PreferencesGroup {
 
 func (w *window) buildApp() *adw.PreferencesGroup {
 	group := adw.NewPreferencesGroup()
-	group.SetTitle("Программа")
-	autostart := adw.NewSwitchRow()
-	autostart.SetTitle("Запускать при входе в систему")
-	autostart.SetSubtitle("Программа будет следить за шлемом и драйвером в фоне")
-	autostart.SetActive(autostartEnabled())
-	autostart.NotifyProperty("active", func() { setAutostart(autostart.Active()) })
-	group.Add(autostart)
+	group.SetTitle(T("Программа"))
+	group.Add(w.buildLanguage())
+	if devMode {
+		dev := adw.NewActionRow()
+		dev.SetTitle(T("Своя сборка (--dev)"))
+		dev.SetSubtitle(T("Программа не встраивается в систему: не ставит себя в меню и ~/.local/bin, не меняет " +
+			"автозапуск и не проверяет обновления. Драйвер и приложение на шлем мастер ставит как обычно"))
+		dev.SetSubtitleLines(4)
+		group.Add(dev)
+	} else {
+		autostart := adw.NewSwitchRow()
+		autostart.SetTitle(T("Запускать при входе в систему"))
+		autostart.SetSubtitle(T("Программа будет следить за шлемом и драйвером в фоне"))
+		autostart.SetActive(autostartEnabled())
+		autostart.NotifyProperty("active", func() { setAutostart(autostart.Active()) })
+		group.Add(autostart)
+	}
 
 	w.updateRow = adw.NewActionRow()
-	w.updateRow.SetTitle("Обновление")
-	update := gtk.NewButtonWithLabel("Обновить")
+	w.updateRow.SetTitle(T("Обновление"))
+	update := gtk.NewButtonWithLabel(T("Обновить"))
 	update.AddCSSClass("suggested-action")
 	update.SetVAlign(gtk.AlignCenter)
 	update.ConnectClicked(w.openUpdate)
@@ -397,19 +431,26 @@ func (w *window) buildApp() *adw.PreferencesGroup {
 	group.Add(w.updateRow)
 
 	wizardRow := adw.NewActionRow()
-	wizardRow.SetTitle("Мастер установки")
-	wizardRow.SetSubtitle("Установить или обновить драйвер SteamVR и приложение на шлеме")
-	button := gtk.NewButtonWithLabel("Открыть")
+	wizardRow.SetTitle(T("Мастер установки"))
+	wizardRow.SetSubtitle(T("Установить или обновить драйвер SteamVR и приложение на шлеме"))
+	button := gtk.NewButtonWithLabel(T("Открыть"))
 	button.SetVAlign(gtk.AlignCenter)
 	button.ConnectClicked(w.openWizard)
 	wizardRow.AddSuffix(button)
 	group.Add(wizardRow)
 
-	if selfInstall { // на Windows удаляют через «Параметры → Приложения»
+	if canUninstall { // на Windows удаляют через «Параметры → Приложения»
 		removeRow := adw.NewActionRow()
-		removeRow.SetTitle("Удалить программу")
-		removeRow.SetSubtitle("Драйвер SteamVR, программа, пункт меню и настройки. Приложение на шлеме останется")
-		remove := gtk.NewButtonWithLabel("Удалить")
+		removeRow.SetTitle(T("Удалить программу"))
+		switch {
+		case devMode:
+			removeRow.SetSubtitle(T("Драйвер SteamVR и настройки. Установленную программу, пункт меню и автозапуск режим --dev не трогает"))
+		case selfInstall:
+			removeRow.SetSubtitle(T("Драйвер SteamVR, программа, пункт меню и настройки. Приложение на шлеме останется"))
+		default:
+			removeRow.SetSubtitle(Tf("Драйвер SteamVR и настройки; саму программу удалите командой flatpak uninstall %s", appID))
+		}
+		remove := gtk.NewButtonWithLabel(T("Удалить"))
 		remove.AddCSSClass("destructive-action")
 		remove.SetVAlign(gtk.AlignCenter)
 		remove.ConnectClicked(w.confirmUninstall)
@@ -419,12 +460,52 @@ func (w *window) buildApp() *adw.PreferencesGroup {
 	return group
 }
 
+// buildLanguage — язык интерфейса; меняется перезапуском программы.
+func (w *window) buildLanguage() *adw.ComboRow {
+	row := adw.NewComboRow()
+	row.SetTitle(T("Язык · Language"))
+	values := []string{languageSystem, languageRussian, languageEnglish}
+	row.SetModel(gtk.NewStringList([]string{T("Как в системе"), "Русский", "English"}))
+	current := w.c.Config().Language
+	for i, value := range values {
+		if value == current {
+			row.SetSelected(uint(i))
+		}
+	}
+	row.NotifyProperty("selected", func() {
+		if !w.c.SetLanguage(values[row.Selected()]) {
+			return
+		}
+		toast := adw.NewToast(T("Язык сменится после перезапуска программы"))
+		toast.SetButtonLabel(T("Перезапустить"))
+		toast.ConnectButtonClicked(w.restart)
+		toast.SetTimeout(0)
+		w.toasts.AddToast(toast)
+	})
+	return row
+}
+
+// restart — перезапуск программы (смена языка).
+func (w *window) restart() {
+	err := restartProgram(func() {
+		w.c.Close()
+		w.win.Close()
+	})
+	if err != nil {
+		w.toasts.AddToast(adw.NewToast(T("Не удалось перезапустить: ") + err.Error()))
+	}
+}
+
 func (w *window) confirmUninstall() {
-	dialog := adw.NewAlertDialog("Удалить PICO Trackers?",
-		"Драйвер будет снят с регистрации в SteamVR и удалён, программа исчезнет из меню приложений, "+
-			"её настройки будут удалены. Приложение на шлеме останется — его можно удалить в настройках шлема.")
-	dialog.AddResponse("cancel", "Отмена")
-	dialog.AddResponse("remove", "Удалить")
+	text := T("Драйвер будет снят с регистрации в SteamVR и удалён, программа исчезнет из меню приложений, " +
+		"её настройки будут удалены. Приложение на шлеме останется — его можно удалить в настройках шлема.")
+	if devMode {
+		text = T("Драйвер будет снят с регистрации в SteamVR и удалён, настройки программы — удалены. Установленная " +
+			"программа, её пункт меню и автозапуск останутся (режим --dev). Приложение на шлеме тоже останется.")
+	}
+	dialog := adw.NewAlertDialog(T("Удалить PICO Trackers?"), text)
+	dialog.AddResponse("cancel", T("Отмена"))
+	dialog.AddResponse("remove", T("Удалить"))
 	dialog.SetResponseAppearance("remove", adw.ResponseDestructive)
 	dialog.SetCloseResponse("cancel")
 	dialog.ConnectResponse(func(response string) {
@@ -435,8 +516,8 @@ func (w *window) confirmUninstall() {
 			err := uninstall(w.logFromThread)
 			glib.IdleAdd(func() {
 				if err != nil {
-					failed := adw.NewAlertDialog("Не удалось удалить", err.Error())
-					failed.AddResponse("close", "Закрыть")
+					failed := adw.NewAlertDialog(T("Не удалось удалить"), err.Error())
+					failed.AddResponse("close", T("Закрыть"))
 					failed.Present(w.win)
 					return
 				}
@@ -449,7 +530,7 @@ func (w *window) confirmUninstall() {
 
 func (w *window) buildLog() *adw.PreferencesGroup {
 	group := adw.NewPreferencesGroup()
-	group.SetTitle("Журнал событий")
+	group.SetTitle(T("Журнал событий"))
 	view := gtk.NewTextView()
 	view.SetEditable(false)
 	view.SetCursorVisible(false)
@@ -491,7 +572,7 @@ func (w *window) addActions() {
 
 func (w *window) launchSteamVR() {
 	launchSteamVR()
-	w.toasts.AddToast(adw.NewToast("Запускаю SteamVR…"))
+	w.toasts.AddToast(adw.NewToast(T("Запускаю SteamVR…")))
 }
 
 func (w *window) enabledTrackers() (names []string) {
@@ -522,7 +603,7 @@ func (w *window) showAbout() {
 	about.SetApplicationName("PICO Trackers")
 	about.SetApplicationIcon(appID)
 	about.SetVersion(appVersion)
-	about.SetComments("PICO Motion Trackers в SteamVR через Steam Link")
+	about.SetComments(T("PICO Motion Trackers в SteamVR через Steam Link"))
 	about.SetDeveloperName("PICOtrackers")
 	about.Present(w.win)
 }
@@ -561,6 +642,7 @@ func (w *window) refresh() {
 	}
 	w.refreshHeadset(s)
 	w.refreshSteamVR(s)
+	w.refreshPico(s)
 	w.refreshCalibration(s)
 	w.refreshTrackers(s)
 	w.refreshHero(s)
@@ -570,47 +652,50 @@ func (w *window) refreshHeadset(s Snapshot) {
 	var parts []string
 	state := "dim-label"
 	switch d := s.Driver; {
+	case d != nil && d.Data && d.Pico.NotCalibrated():
+		parts = append(parts, T("на связи · трекеры не откалиброваны — в SteamVR ничего не передаётся"))
+		state = "warning"
 	case d != nil && d.Data && !d.TrackersReady:
-		parts = append(parts, "на связи · трекеры НЕ подключены — в SteamVR ничего не передаётся")
+		parts = append(parts, T("на связи · трекеры НЕ подключены — в SteamVR ничего не передаётся"))
 		state = "warning"
 	case d != nil && d.Data:
-		parts = append(parts, fmt.Sprintf("передаёт %d из %d пак/с · трекеры подключены", d.PacketsPerS, d.Rate))
+		parts = append(parts, Tf("передаёт %d из %d пак/с · трекеры подключены", d.PacketsPerS, d.Rate))
 		state = "success"
 	case s.ServiceKnown && !s.ServiceRunning:
-		parts = append(parts, "сервис на шлеме выключен")
+		parts = append(parts, T("сервис на шлеме выключен"))
 		state = "warning"
 	case s.Stats != nil:
-		parts = append(parts, "передаёт "+s.Stats["sent"]+" пак/с")
+		parts = append(parts, Tf("передаёт %s пак/с", s.Stats["sent"]))
 		state = "success"
 	case s.Listener != "" && !strings.HasPrefix(s.Listener, "tracking ->"):
-		parts = append(parts, "сервис ждёт SteamVR")
+		parts = append(parts, T("сервис ждёт SteamVR"))
 	default:
-		parts = append(parts, "нет данных")
+		parts = append(parts, T("нет данных"))
 		if s.SteamVRRunning {
 			state = "warning"
 		}
 	}
 	switch {
 	case s.AppKnown && s.AppState == AppMissing:
-		parts = append(parts, "приложение не установлено — откройте мастер установки")
+		parts = append(parts, T("приложение не установлено — откройте мастер установки"))
 		state = "warning"
 	case s.AppKnown && s.AppState == AppOutdated && (s.Driver == nil || !s.Driver.Data):
-		parts = append(parts, "приложение устарело — обновите в мастере установки")
+		parts = append(parts, T("приложение устарело — обновите в мастере установки"))
 		state = "warning"
 	}
 	switch {
 	case s.HeadsetSerial != "":
-		via := "adb по USB "
+		via := T("adb по USB %s")
 		if s.HeadsetWifi {
-			via = "adb по Wi-Fi "
+			via = T("adb по Wi-Fi %s")
 		}
-		link := via + strings.Split(s.HeadsetSerial, ":")[0]
+		link := fmt.Sprintf(via, strings.Split(s.HeadsetSerial, ":")[0])
 		if !s.AdbConnected {
-			link += " (нет связи)"
+			link += " " + T("(нет связи)")
 		}
 		parts = append(parts, link)
 	case s.HeadsetError != "":
-		parts = append(parts, "adb: шлем не найден")
+		parts = append(parts, T("adb: шлем не найден"))
 		if s.Driver == nil || !s.Driver.Data {
 			state = "error"
 		}
@@ -620,22 +705,24 @@ func (w *window) refreshHeadset(s Snapshot) {
 	w.refreshService(s)
 }
 
-const serviceMenuUnknown = "Сервис на шлеме — нет связи по adb"
+// serviceMenuUnknown — по-русски: T при выводе (переменная вычисляется до выбора языка).
+var serviceMenuUnknown = N("Сервис на шлеме — нет связи по adb")
 
 // refreshService — одна кнопка (строка «Шлем PICO») и один пункт меню на включение и выключение сервиса;
 // надпись — по его состоянию на шлеме (adb), независимо от SteamVR.
 func (w *window) refreshService(s Snapshot) {
-	label, menuLabel := "Включить сервис", "Включить сервис на шлеме"
+	label, menuLabel := N("Включить сервис"), N("Включить сервис на шлеме")
 	switch {
 	case !s.ServiceKnown:
 		menuLabel = serviceMenuUnknown
 	case s.ServiceChange == "start":
-		label, menuLabel = "Включаю…", "Сервис на шлеме включается…"
+		label, menuLabel = N("Включаю…"), N("Сервис на шлеме включается…")
 	case s.ServiceChange == "stop":
-		label, menuLabel = "Выключаю…", "Сервис на шлеме выключается…"
+		label, menuLabel = N("Выключаю…"), N("Сервис на шлеме выключается…")
 	case s.ServiceRunning:
-		label, menuLabel = "Выключить сервис", "Выключить сервис на шлеме"
+		label, menuLabel = N("Выключить сервис"), N("Выключить сервис на шлеме")
 	}
+	label, menuLabel = T(label), T(menuLabel)
 	w.serviceButton.SetLabel(label)
 	w.serviceButton.SetVisible(s.ServiceKnown)
 	w.serviceButton.SetSensitive(s.ServiceChange == "")
@@ -657,24 +744,85 @@ func (w *window) refreshSteamVR(s Snapshot) {
 	var text, state string
 	switch d := s.Driver; {
 	case !s.SteamVRRunning:
-		text, state = "не запущен", "dim-label"
+		text, state = T("не запущен"), "dim-label"
 	case d == nil:
-		text, state = "запущен, драйвер не отвечает", "warning"
+		text, state = T("запущен, драйвер не отвечает"), "warning"
 		if s.RestartSteamVR {
-			text += " — перезапустите SteamVR"
+			text += " — " + T("перезапустите SteamVR")
 		}
 	default:
-		hmd, hmdState := "шлем не подключён (Steam Link)", "warning"
+		hmd, hmdState := T("шлем не подключён (Steam Link)"), "warning"
 		if d.HMD {
-			hmd, hmdState = "шлем подключён", "success"
+			hmd, hmdState = T("шлем подключён"), "success"
 		}
-		text, state = "драйвер на связи · "+hmd, hmdState
+		text, state = T("драйвер на связи")+" · "+hmd, hmdState
 		if !d.Tracking {
-			text += " · трекинг выключен"
+			text += " · " + T("трекинг выключен")
 		}
 	}
 	w.steamVRRow.SetSubtitle(text)
 	setDot(w.steamVRDot, state)
+}
+
+// refreshPico — трекеры PICO по словам шлема: подключены ли, откалиброваны ли, заряд. Кнопка «Откалибровать» —
+// только когда трекеры подключены, но не откалиброваны.
+func (w *window) refreshPico(s Snapshot) {
+	d := s.Driver
+	var p *PicoStatus
+	if d != nil && d.Data {
+		p = d.Pico
+	}
+	var parts []string
+	state := "dim-label"
+	switch {
+	case d == nil || !d.Data:
+		parts = append(parts, "—")
+	case p == nil && d.TrackersReady:
+		parts, state = append(parts, T("подключены")), "success"
+	case p == nil:
+		parts, state = append(parts, T("не подключены")), "warning"
+	case p.NotCalibrated():
+		parts, state = append(parts, T("подключены, но не откалиброваны")), "warning"
+	case p.Status == 1 || p.Status == 2 || d.TrackersReady:
+		parts, state = append(parts, T("подключены и откалиброваны")), "success"
+		if p.Status == 2 {
+			parts, state = append(parts, T("данные неточные")), "warning"
+		}
+	case p.Count == 0 || p.Error == picoErrorNotEnough:
+		parts, state = append(parts, T("не подключены — включите трекеры")), "warning"
+	default:
+		parts, state = append(parts, Tf("нет данных от трекеров (код %d)", p.Error)), "warning"
+	}
+	if p != nil && p.Count > 0 {
+		parts = append(parts, Tf("подключено: %d", p.Count))
+	}
+	if levels := p.Batteries(); len(levels) > 0 {
+		var texts []string
+		low := false
+		for _, level := range levels {
+			texts = append(texts, Tf("%d %%", level))
+			low = low || level < lowBattery
+		}
+		battery := Tf("заряд %s", strings.Join(texts, ", "))
+		if low {
+			battery += " — " + T("зарядите трекеры")
+			if state == "success" {
+				state = "warning"
+			}
+		}
+		parts = append(parts, battery)
+	} else if d != nil && d.Data && p == nil && s.AppKnown && s.AppState == AppOutdated {
+		parts = append(parts, T("заряд — после обновления приложения на шлеме"))
+	}
+	w.picoRow.SetSubtitle(strings.Join(parts, " · "))
+	setDot(w.picoDot, state)
+	w.calibrateButton.SetVisible(p.NotCalibrated() || s.Calibrating)
+	w.calibrateButton.SetSensitive(!s.Calibrating)
+	if s.Calibrating {
+		w.calibrateButton.SetLabel(T("Открываю…"))
+	} else {
+		w.calibrateButton.SetLabel(T("Откалибровать"))
+	}
 }
 
 func (w *window) refreshCalibration(s Snapshot) {
@@ -683,18 +831,18 @@ func (w *window) refreshCalibration(s Snapshot) {
 	case d == nil:
 		text, state = "—", "dim-label"
 	case d.Data && !d.TrackersReady && !d.Calibration.Valid:
-		text, state = "ждёт трекеры PICO", "dim-label"
+		text, state = T("ждёт трекеры PICO"), "dim-label"
 	case d.Calibration.Valid:
 		mm := d.Calibration.Error * 1000
-		text = fmt.Sprintf("точность %.0f мм · %d замеров · поворот %.1f°", mm, d.Calibration.Samples, d.Calibration.Yaw)
+		text = Tf("точность %.0f мм · %d замеров · поворот %.1f°", mm, d.Calibration.Samples, d.Calibration.Yaw)
 		state = "success"
 		if mm >= 30 {
 			state = "warning"
 		}
 	case !d.HMD:
-		text, state = "ждёт позу шлема из Steam Link", "dim-label"
+		text, state = T("ждёт позу шлема из Steam Link"), "dim-label"
 	default:
-		text, state = "идёт: постойте спокойно и медленно повертите головой", "warning"
+		text, state = T("идёт: постойте спокойно и медленно повертите головой"), "warning"
 	}
 	w.calibrationRow.SetSubtitle(text)
 	setDot(w.calibrationDot, state)
@@ -711,19 +859,21 @@ func (w *window) refreshTrackers(s Snapshot) {
 		i, known := live[name]
 		switch {
 		case !control.active():
-			control.setState("выключен", "выключен", "dim-label")
+			control.setState(T("выключен"), T("выключен"), "dim-label")
 		case s.Driver == nil:
-			control.setState("включён · SteamVR не на связи", "нет связи со SteamVR", "dim-label")
+			control.setState(T("включён · SteamVR не на связи"), T("нет связи со SteamVR"), "dim-label")
+		case s.Driver.Data && s.Driver.Pico.NotCalibrated():
+			control.setState(T("трекеры PICO не откалиброваны — в SteamVR не передаётся"), T("трекеры не откалиброваны"), "warning")
 		case s.Driver.Data && !s.Driver.TrackersReady:
-			control.setState("трекеры PICO не подключены — в SteamVR не передаётся", "трекеры не подключены", "warning")
+			control.setState(T("трекеры PICO не подключены — в SteamVR не передаётся"), T("трекеры не подключены"), "warning")
 		case !known || !s.Driver.Trackers[i].Enabled:
-			control.setState("применяется…", "применяется…", "dim-label")
+			control.setState(T("применяется…"), T("применяется…"), "dim-label")
 		case s.Driver.Trackers[i].Valid:
-			control.setState("в SteamVR · отслеживается", "отслеживается", "success")
+			control.setState(T("в SteamVR · отслеживается"), T("отслеживается"), "success")
 		case !s.Driver.Trackers[i].Added:
-			control.setState("появится в SteamVR, когда пойдут данные", "ждёт данные", "dim-label")
+			control.setState(T("появится в SteamVR, когда пойдут данные"), T("ждёт данные"), "dim-label")
 		default:
-			control.setState("в SteamVR · нет позиции", "нет позиции", "warning")
+			control.setState(T("в SteamVR · нет позиции"), T("нет позиции"), "warning")
 		}
 	}
 }
@@ -742,41 +892,48 @@ func (w *window) refreshHero(s Snapshot) {
 	w.heroAction = nil
 	switch {
 	case !s.DriverState.Ready():
-		title, text, state = "Нужна установка", "Драйвер SteamVR не установлен или устарел", "warning"
-		w.heroButton.SetLabel("Открыть мастер")
+		title, text, state = T("Нужна установка"), T("Драйвер SteamVR не установлен или устарел"), "warning"
+		w.heroButton.SetLabel(T("Открыть мастер"))
 		w.heroAction = w.openWizard
 	case s.ServiceKnown && !s.ServiceRunning:
-		title, text, state = "Сервис на шлеме выключен", "Без него шлем не передаёт трекинг", "warning"
+		title, text, state = T("Сервис на шлеме выключен"), T("Без него шлем не передаёт трекинг"), "warning"
 		if s.ServiceOff {
-			text = "Выключен вами: сам он не включится, пока не нажмёте кнопку"
+			text = T("Выключен вами: сам он не включится, пока не нажмёте кнопку")
 		}
-		w.heroButton.SetLabel("Включить сервис")
+		w.heroButton.SetLabel(T("Включить сервис"))
 		w.heroAction = w.c.StartService
 	case !s.SteamVRRunning:
-		title, text, state = "Ждём SteamVR", "Подключитесь со шлема через Steam Link или запустите SteamVR", "dim-label"
-		w.heroButton.SetLabel("Запустить SteamVR")
+		title, text, state = T("Ждём SteamVR"), T("Подключитесь со шлема через Steam Link или запустите SteamVR"), "dim-label"
+		w.heroButton.SetLabel(T("Запустить SteamVR"))
 		w.heroAction = w.launchSteamVR
 	case d == nil:
-		title, text, state = "Драйвер не отвечает", "SteamVR запускается или драйвер не загружен", "warning"
+		title, text, state = T("Драйвер не отвечает"), T("SteamVR запускается или драйвер не загружен"), "warning"
 		if s.RestartSteamVR {
-			text = "Перезапустите SteamVR, чтобы загрузить новую версию драйвера"
+			text = T("Перезапустите SteamVR, чтобы загрузить новую версию драйвера")
 		}
 	case !s.Tracking:
-		title, text, state = "Трекинг выключен", "Включите переключатель «Передавать трекинг»", "dim-label"
+		title, text, state = T("Трекинг выключен"), T("Включите переключатель «Передавать трекинг»"), "dim-label"
 	case !d.Data:
-		title, text, state = "Ждём данные со шлема", "Шлем включён и надет? Сервис PICO Trackers запущен?", "warning"
+		title, text, state = T("Ждём данные со шлема"), T("Шлем включён и надет? Сервис PICO Trackers запущен?"), "warning"
+	case d.Pico.NotCalibrated():
+		title, text, state = T("Трекеры не откалиброваны"),
+			T("Нажмите «Откалибровать»: на шлеме откроется калибровка трекеров PICO. Пока её нет, в SteamVR ничего не передаётся"), "warning"
+		w.heroButton.SetLabel(T("Откалибровать"))
+		if !s.Calibrating {
+			w.heroAction = w.c.CalibrateTrackers
+		}
 	case !d.TrackersReady:
-		title, text, state = "Трекеры не подключены",
-			"Включите трекеры PICO: пока они не подключены к шлему, в SteamVR ничего не передаётся", "warning"
+		title, text, state = T("Трекеры не подключены"),
+			T("Включите трекеры PICO: пока они не подключены к шлему, в SteamVR ничего не передаётся"), "warning"
 	case !d.HMD:
-		title, text, state = "Шлем не подключён к SteamVR", "Подключитесь через Steam Link", "warning"
+		title, text, state = T("Шлем не подключён к SteamVR"), T("Подключитесь через Steam Link"), "warning"
 	case !d.Calibration.Valid:
-		title, text, state = "Калибровка", "Постойте спокойно и медленно повертите головой", "warning"
+		title, text, state = T("Калибровка"), T("Постойте спокойно и медленно повертите головой"), "warning"
 	case active == 0:
-		title, text, state = "Нет активных трекеров", "Включите трекеры на схеме ниже", "warning"
+		title, text, state = T("Нет активных трекеров"), T("Включите трекеры на схеме ниже"), "warning"
 	default:
-		title, state = "Трекинг работает", "success"
-		text = fmt.Sprintf("%d трекеров в SteamVR · %d пак/с · точность %.0f мм", active, d.PacketsPerS,
+		title, state = T("Трекинг работает"), "success"
+		text = Tf("%d трекеров в SteamVR · %d пак/с · точность %.0f мм", active, d.PacketsPerS,
 			d.Calibration.Error*1000)
 	}
 	w.heroTitle.SetLabel(title)

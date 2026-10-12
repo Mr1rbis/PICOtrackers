@@ -63,7 +63,7 @@ func newView3D(c *Controller, enabled func() []string) *view3D {
 	})
 	v.area.AddController(scroll)
 
-	hint := gtk.NewLabel("Камера за спиной и следует за поворотом. Перетаскивайте мышью — облёт, колесо — масштаб.")
+	hint := gtk.NewLabel(T("Камера за спиной и следует за поворотом. Перетаскивайте мышью — облёт, колесо — масштаб."))
 	hint.AddCSSClass("dim-label")
 	hint.AddCSSClass("caption")
 	hint.SetMarginTop(6)
@@ -86,7 +86,7 @@ func (v *view3D) draw(area *gtk.DrawingArea, cr *cairo.Context, width, height in
 	if !fresh {
 		setColor(cr, ink, 0.5)
 		cr.SetFontSize(15)
-		text := "Нет данных — 3D-вид оживёт, когда пойдёт трекинг"
+		text := T("Нет данных — 3D-вид оживёт, когда пойдёт трекинг")
 		extents := cr.TextExtents(text)
 		cr.MoveTo((w-extents.Width)/2, h/2)
 		cr.ShowText(text)

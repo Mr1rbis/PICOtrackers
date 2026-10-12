@@ -1,6 +1,7 @@
 // PICO Trackers (шлем): читает скелет тела XR_BD_body_tracking и шлёт его на ПК по UDP.
 // Пока трекеры PICO не подключены, скелет не шлётся (ноги PICO достраивает без них — выдуманные),
-// только пакет состояния без суставов: драйвер видит, что шлем на связи.
+// только пакет состояния без суставов: драйвер видит, что шлем на связи. Раз в секунду — StatusPacket:
+// состояние трекеров PICO (подключены, откалиброваны, заряд — pico_trackers.cpp).
 //
 // Особенности рантайма PICO 4 Pro (Pico(XRT), форк Monado) — подробнее в CLAUDE.md:
 //  * сессия headless (XR_MND_headless): без графики, экран остаётся у Steam Link;
@@ -32,6 +33,7 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include "pico_trackers.h"
 #include "protocol.h"
 
 #define TAG "PicoTrackers"
@@ -55,9 +57,12 @@ jobject g_context = nullptr;
 std::thread g_thread;
 std::atomic<bool> g_running{false};
 std::atomic<int> g_rate{kDefaultRate};
+std::atomic<bool> g_russian{true};  // язык строк состояния для окна приложения (Native.setRussian)
 
 std::mutex g_status_mutex;
-std::string g_status = "остановлено";
+std::string g_status;
+
+const char *tr(const char *ru, const char *en) { return g_russian.load() ? ru : en; }
 
 void set_status(const std::string &s) {
     std::lock_guard<std::mutex> lock(g_status_mutex);
@@ -146,6 +151,7 @@ private:
 class BodyTracking {
 public:
     ~BodyTracking() {
+        pico::set_runtime(XR_NULL_HANDLE);
         if (tracker_) destroy_tracker_(tracker_);
         if (session_) xrDestroySession(session_);
         if (instance_) xrDestroyInstance(instance_);
@@ -174,7 +180,7 @@ public:
         };
         for (const char *required : {XR_BD_BODY_TRACKING_EXTENSION_NAME, XR_MND_HEADLESS_EXTENSION_NAME,
                                      XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME})
-            if (!has(required)) return format("рантайм не поддерживает %s", required);
+            if (!has(required)) return format(tr("рантайм не поддерживает %s", "runtime does not support %s"), required);
 
         std::vector<const char *> enabled = {XR_BD_BODY_TRACKING_EXTENSION_NAME, XR_MND_HEADLESS_EXTENSION_NAME,
                                              XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME};
@@ -193,6 +199,7 @@ public:
         create_info.applicationInfo.apiVersion = XR_API_VERSION_1_0;
         XrResult r = xrCreateInstance(&create_info, &instance_);
         if (XR_FAILED(r)) return format("xrCreateInstance: %d", r);
+        pico::set_runtime(instance_);
 
         XrSystemGetInfo system_info{XR_TYPE_SYSTEM_GET_INFO};
         system_info.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
@@ -203,7 +210,7 @@ public:
         XrSystemBodyTrackingPropertiesBD body_props{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD};
         XrSystemProperties props{XR_TYPE_SYSTEM_PROPERTIES, &body_props};
         xrGetSystemProperties(instance_, system, &props);
-        if (!body_props.supportsBodyTracking) return "шлем не поддерживает body tracking";
+        if (!body_props.supportsBodyTracking) return tr("шлем не поддерживает body tracking", "headset does not support body tracking");
 
         // Без graphics binding и с XR_MND_headless сессия создаётся без графики.
         XrSessionCreateInfo session_info{XR_TYPE_SESSION_CREATE_INFO};
@@ -223,7 +230,7 @@ public:
         get_state_ = get_proc<PFN_xrGetBodyTrackingStatePico>(instance_, "xrGetBodyTrackingStateBD");
         timespec_to_xr_ = get_proc<PFN_xrConvertTimespecTimeToTimeKHR>(instance_, "xrConvertTimespecTimeToTimeKHR");
         if (!create_tracker || !destroy_tracker_ || !locate_joints_ || !timespec_to_xr_)
-            return "рантайм не отдал функции body tracking";
+            return tr("рантайм не отдал функции body tracking", "runtime did not provide body tracking functions");
 
         for (auto [set, joints] : {std::pair{XR_BODY_JOINT_SET_FULL_BODY_JOINTS_BD, XR_BODY_JOINT_COUNT_BD},
                                    std::pair{XR_BODY_JOINT_SET_BODY_WITHOUT_ARM_BD, XR_BODY_JOINT_WITHOUT_ARM_COUNT_BD}}) {
@@ -287,12 +294,17 @@ public:
         return true;
     }
 
-    // Раз в секунду: подключены ли трекеры (status != 0 — подключены и откалиброваны). Если рантайм
-    // состояние не сообщает ни разу — считаем подключёнными, иначе трекинг не пошёл бы вовсе.
+    // Раз в секунду: подключены ли трекеры (status != 0 — подключены и откалиброваны; иначе error —
+    // почему: 1 не откалиброваны, 2 мало трекеров…). Если рантайм состояние не сообщает ни разу — считаем
+    // подключёнными, иначе трекинг не пошёл бы вовсе.
     void refresh_tracker_state() {
         int32_t status[16]{}, error[16]{};
         if (get_state_ && XR_SUCCEEDED(get_state_(instance_, status, error))) {
             trackers_ready_ = status[0] != 0;
+            if (!state_known_ || status[0] != body_status_ || error[0] != body_error_)
+                LOGI("body tracking state: status=%d error=%d", status[0], error[0]);
+            body_status_ = status[0];
+            body_error_ = error[0];
             state_known_ = true;
         } else if (!state_known_ && !trackers_ready_) {
             LOGW("tracker state unavailable, sending skeleton anyway");
@@ -301,6 +313,8 @@ public:
     }
 
     bool trackers_ready() const { return trackers_ready_; }
+    int8_t body_status() const { return state_known_ ? static_cast<int8_t>(body_status_) : picotrackers::kBodyStatusUnknown; }
+    int8_t body_error() const { return state_known_ ? static_cast<int8_t>(body_error_) : picotrackers::kBodyErrorUnknown; }
     XrSessionState state() const { return state_; }
 
     XrResult take_last_error() {
@@ -343,6 +357,7 @@ private:
     XrSessionState state_ = XR_SESSION_STATE_UNKNOWN;
     bool trackers_ready_ = false;
     bool state_known_ = false;  // рантайм хоть раз сообщил состояние трекеров
+    int32_t body_status_ = 0, body_error_ = 0;
     XrResult last_error_ = XR_SUCCESS;
 
     PFN_xrDestroyBodyTrackerBD destroy_tracker_ = nullptr;
@@ -356,7 +371,7 @@ void run(const std::string &host, int port) {
 
     UdpSender udp;
     if (!udp.open(host, port)) {
-        set_status(format("ОШИБКА: не удалось открыть UDP на %s:%d", host.c_str(), port));
+        set_status(format(tr("ОШИБКА: не удалось открыть UDP на %s:%d", "ERROR: cannot open UDP to %s:%d"), host.c_str(), port));
         LOGE("udp open failed: %s:%d", host.c_str(), port);
         return;
     }
@@ -366,7 +381,8 @@ void run(const std::string &host, int port) {
         BodyTracking body;
         std::string error = body.init();
         if (!error.empty()) {
-            set_status("Не удалось запустить трекинг: " + error + "\nПовтор через 2 с…");
+            set_status(tr("Не удалось запустить трекинг: ", "Cannot start tracking: ") + error +
+                       tr("\nПовтор через 2 с…", "\nRetrying in 2 s…"));
             LOGW("init failed: %s", error.c_str());
             sleep_while_running(kRetryDelay);
             continue;
@@ -384,13 +400,20 @@ void run(const std::string &host, int port) {
             if (t >= next_report) {
                 next_report = t + std::chrono::seconds(1);
                 body.refresh_tracker_state();
+                picotrackers::StatusPacket status = pico::status_packet(body.body_status(), body.body_error());
+                udp.send(&status, sizeof(status));
                 XrResult err = body.take_last_error();
-                std::string err_text = err == XR_SUCCESS ? "" : "\nОшибка опроса: " + body.result_string(err);
-                set_status(format("Отправка на %s: %d пакетов/с\nТрекеры: %s\nСкелет отслеживается: %d/%d\nСессия: %s",
-                                  target.c_str(), sent,
-                                  body.trackers_ready() ? "подключены"
-                                                        : "НЕ подключены — включите трекеры, до тех пор данные не передаются",
-                                  tracked, sent, state_name(body.state())) +
+                std::string err_text = err == XR_SUCCESS ? "" : tr("\nОшибка опроса: ", "\nPolling error: ") + body.result_string(err);
+                const char *trackers =
+                    body.trackers_ready() ? tr("подключены", "connected")
+                    : body.body_error() == picotrackers::kBodyErrorNotCalibrated || pico::not_calibrated()
+                        ? tr("НЕ откалиброваны — откалибруйте их, до тех пор данные не передаются",
+                             "NOT calibrated — calibrate them, until then no data is sent")
+                        : tr("НЕ подключены — включите трекеры, до тех пор данные не передаются",
+                             "NOT connected — turn the trackers on, until then no data is sent");
+                set_status(format(tr("Отправка на %s: %d пакетов/с\nТрекеры: %s\nСкелет отслеживается: %d/%d\nСессия: %s",
+                                     "Sending to %s: %d packets/s\nTrackers: %s\nSkeleton tracked: %d/%d\nSession: %s"),
+                                  target.c_str(), sent, trackers, tracked, sent, state_name(body.state())) +
                            err_text);
                 // Строку «stats» разбирает pc/picotrackers.py.
                 LOGI("stats sent=%d tracked=%d trackers=%d session=%s err=%d rate=%d target=%s", sent, tracked,
@@ -422,7 +445,7 @@ void run(const std::string &host, int port) {
         }
         if (lost) {
             LOGW("session lost, restarting");
-            set_status("Сессия OpenXR потеряна, перезапуск…");
+            set_status(tr("Сессия OpenXR потеряна, перезапуск…", "OpenXR session lost, restarting…"));
             sleep_while_running(kRetryDelay);
         }
     }
@@ -432,7 +455,7 @@ void run(const std::string &host, int port) {
 void tracking_thread(std::string host, int port) {
     JNIEnv *env = nullptr;
     g_vm->AttachCurrentThread(&env, nullptr);
-    set_status("запуск…");
+    set_status(tr("запуск…", "starting…"));
     run(host, port);
     g_running = false;  // после ошибки можно нажать «Старт» ещё раз
     g_vm->DetachCurrentThread();
@@ -464,7 +487,7 @@ extern "C" JNIEXPORT void JNICALL Java_dev_picotrackers_headset_Native_start(JNI
 extern "C" JNIEXPORT void JNICALL Java_dev_picotrackers_headset_Native_stop(JNIEnv *, jclass) {
     g_running = false;
     if (g_thread.joinable()) g_thread.join();
-    set_status("трекинг выключен");
+    set_status(tr("трекинг выключен", "tracking is off"));
 }
 
 extern "C" JNIEXPORT void JNICALL Java_dev_picotrackers_headset_Native_setRate(JNIEnv *, jclass, jint rate) {
@@ -478,5 +501,27 @@ extern "C" JNIEXPORT jboolean JNICALL Java_dev_picotrackers_headset_Native_runni
 
 extern "C" JNIEXPORT jstring JNICALL Java_dev_picotrackers_headset_Native_status(JNIEnv *env, jclass) {
     std::lock_guard<std::mutex> lock(g_status_mutex);
-    return env->NewStringUTF(g_status.c_str());
+    return env->NewStringUTF(g_status.empty() ? tr("остановлено", "stopped") : g_status.c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL Java_dev_picotrackers_headset_Native_setRussian(JNIEnv *, jclass, jboolean russian) {
+    g_russian = russian;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL Java_dev_picotrackers_headset_Native_pollPicoTrackers(JNIEnv *, jclass) {
+    return pico::poll();
+}
+
+extern "C" JNIEXPORT jstring JNICALL Java_dev_picotrackers_headset_Native_picoTrackers(JNIEnv *env, jclass) {
+    return env->NewStringUTF(pico::describe(g_russian.load()).c_str());
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_dev_picotrackers_headset_Native_startCalibration(JNIEnv *, jclass) {
+    return pico::start_calibration();
+}
+
+extern "C" JNIEXPORT void JNICALL Java_dev_picotrackers_headset_Native_setCalibrationResult(JNIEnv *, jclass,
+                                                                                         jint request, jint result) {
+    pico::set_calibration_result(static_cast<uint16_t>(request),
+                                 static_cast<int16_t>(std::clamp(result, -32767, 32767)));
 }

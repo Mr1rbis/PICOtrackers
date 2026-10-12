@@ -37,6 +37,37 @@ func openVRPathsFile() string { return filepath.Join(localAppData(), "openvr", "
 
 func vrpathregPath(runtime string) string { return filepath.Join(runtime, `bin\win64\vrpathreg.exe`) }
 
+func hostCommand(name string, args ...string) (string, []string) { return name, args }
+
+func restoreHostEnv() {}
+
+func initGTKFromEnv() {}
+
+// systemLanguage — язык интерфейса Windows: русский или английский.
+func systemLanguage() string {
+	id, _, _ := syscall.NewLazyDLL("kernel32.dll").NewProc("GetUserDefaultUILanguage").Call()
+	if id&0x3ff == 0x19 { // LANG_RUSSIAN
+		return languageRussian
+	}
+	return languageEnglish
+}
+
+// restartProgram запускает программу заново (смена языка): новая дождётся выхода этой (UDP-порт занят ею).
+func restartProgram(cleanup func()) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := command(exe, append([]string{fmt.Sprintf("--wait-pid=%d", os.Getpid())}, devArgs()...)...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	cmd.Process.Release()
+	cleanup()
+	os.Exit(0)
+	return nil
+}
+
 // hideConsole — чтобы adb, reg и powershell не мигали окнами консоли.
 func hideConsole(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
@@ -58,8 +89,7 @@ func steamVRStartedAt() (time.Time, bool) {
 }
 
 func launchSteamVR() {
-	cmd := exec.Command("cmd", "/c", "start", "", fmt.Sprintf("steam://rungameid/%d", steamVRAppID))
-	hideConsole(cmd)
+	cmd := command("cmd", "/c", "start", "", fmt.Sprintf("steam://rungameid/%d", steamVRAppID))
 	if cmd.Start() == nil {
 		go cmd.Wait()
 	}
@@ -80,7 +110,10 @@ func setAutostart(enabled bool) {
 }
 
 // selfInstall — на Windows программу ставит установщик (windows/installer.iss), шага «Программа» в мастере нет.
-const selfInstall = false
+var selfInstall = false
+
+// canUninstall — удаляют через «Параметры → Приложения» (деинсталлятор).
+var canUninstall = false
 
 func installedExecutable() string { return "" }
 
@@ -114,7 +147,7 @@ func canSelfUpdate() error {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "unins000.exe")); err != nil {
-		return errors.New("это переносная версия (из zip) — скачайте новую со страницы релиза")
+		return errors.New(T("это переносная версия (из zip) — скачайте новую со страницы релиза"))
 	}
 	return nil
 }
@@ -131,13 +164,12 @@ func installUpdate(name string, data []byte, log logFunc) (restart func() error,
 	if err := os.WriteFile(setup, data, 0o755); err != nil {
 		return nil, err
 	}
-	log("установщик новой версии: " + setup)
+	log(Tf("установщик новой версии: %s", setup))
 	return func() error {
 		script := fmt.Sprintf("Wait-Process -Id %d -Timeout 60 -ErrorAction SilentlyContinue; "+
 			"Start-Process -FilePath '%s' -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/UPDATE'",
 			os.Getpid(), strings.ReplaceAll(setup, "'", "''"))
-		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-		hideConsole(cmd)
+		cmd := command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 		if err := cmd.Start(); err != nil {
 			return err
 		}

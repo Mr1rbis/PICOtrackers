@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="dev.picotrackers.headset"
-    android:versionCode="6"
-    android:versionName="1.6">
+    android:versionCode="7"
+    android:versionName="1.7">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Фоновый сервис открывает калибровку трекеров PICO (окно другого приложения): Android 10 разрешает
+         это приложениям с правом «поверх других окон». Его выдаёт программа на ПК: appops по adb. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
 
@@ -37,7 +40,7 @@
         </activity>
 
         <!-- Снаружи сервис может запустить только adb shell (у него есть DUMP) — так его
-             запускает pc/picotrackers.py, не открывая окно поверх Steam Link. -->
+             запускает программа на ПК, не открывая окно поверх Steam Link. -->
         <service
             android:name=".TrackingService"
             android:exported="true"

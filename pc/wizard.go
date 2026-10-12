@@ -5,8 +5,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -61,7 +59,7 @@ func newWizardStep(title, icon, heading, description string) *wizardStep {
 	s.secondry = gtk.NewButtonWithLabel("")
 	s.secondry.AddCSSClass("pill")
 	s.secondry.SetVisible(false)
-	s.next = gtk.NewButtonWithLabel("Далее")
+	s.next = gtk.NewButtonWithLabel(T("Далее"))
 	s.next.AddCSSClass("suggested-action")
 	s.next.AddCSSClass("pill")
 	s.buttons.Append(s.secondry)
@@ -109,7 +107,7 @@ func (w *window) openWizard() {
 	w.wizard = z
 	z.nav = adw.NewNavigationView()
 	z.dialog = adw.NewDialog()
-	z.dialog.SetTitle("Мастер установки")
+	z.dialog.SetTitle(T("Мастер установки"))
 	z.dialog.SetContentWidth(580)
 	z.dialog.SetContentHeight(640)
 	z.dialog.SetChild(z.nav)
@@ -119,13 +117,12 @@ func (w *window) openWizard() {
 }
 
 func (z *wizard) welcomeStep() *adw.NavigationPage {
-	what := "драйвер SteamVR и приложение на шлем PICO"
+	what := T("Мастер установит драйвер SteamVR и приложение на шлем PICO.")
 	if selfInstall {
-		what = "программу, драйвер SteamVR и приложение на шлем PICO"
+		what = T("Мастер установит программу, драйвер SteamVR и приложение на шлем PICO.")
 	}
-	s := newWizardStep("Добро пожаловать", appID, "Установка PICO Trackers",
-		"Мастер установит "+what+". Потом трекинг будет включаться сам, "+
-			"когда вы подключаетесь к компьютеру через Steam Link.")
+	s := newWizardStep(T("Добро пожаловать"), appID, T("Установка PICO Trackers"),
+		what+" "+T("Потом трекинг будет включаться сам, когда вы подключаетесь к компьютеру через Steam Link."))
 	s.next.ConnectClicked(func() {
 		if selfInstall {
 			z.nav.Push(z.programStep())
@@ -139,31 +136,31 @@ func (z *wizard) welcomeStep() *adw.NavigationPage {
 // ---------- шаг 0 (Linux): сама программа ----------
 
 func (z *wizard) programStep() *adw.NavigationPage {
-	s := newWizardStep("Программа", appID, "Программа",
-		"Копия программы в домашней папке и пункт в меню приложений. Права администратора не нужны.")
+	s := newWizardStep(T("Программа"), appID, T("Программа"),
+		T("Копия программы в домашней папке и пункт в меню приложений. Права администратора не нужны."))
 	row, dot := s.row("PICO Trackers")
 	menu := adw.NewSwitchRow()
-	menu.SetTitle("Пункт в меню приложений")
-	menu.SetSubtitle("Со значком — чтобы запускать программу из меню")
+	menu.SetTitle(T("Пункт в меню приложений"))
+	menu.SetSubtitle(T("Со значком — чтобы запускать программу из меню"))
 	s.rows.Add(menu)
-	s.secondry.SetLabel("Пропустить")
+	s.secondry.SetLabel(T("Пропустить"))
 	s.secondry.SetVisible(true)
 
 	state := programState()
 	menu.SetActive(state.InMenu || !state.Installed)
 	switch {
 	case state.Current:
-		row.SetSubtitle("Установлена: " + installedExecutable())
+		row.SetSubtitle(Tf("Установлена: %s", installedExecutable()))
 		setDot(dot, "success")
-		s.next.SetLabel("Далее")
+		s.next.SetLabel(T("Далее"))
 	case state.Installed:
-		row.SetSubtitle("Будет обновлена: " + installedExecutable())
+		row.SetSubtitle(Tf("Будет обновлена: %s", installedExecutable()))
 		setDot(dot, "warning")
-		s.next.SetLabel("Обновить и далее")
+		s.next.SetLabel(T("Обновить и далее"))
 	default:
-		row.SetSubtitle("Будет установлена в " + installedExecutable())
+		row.SetSubtitle(Tf("Будет установлена в %s", installedExecutable()))
 		setDot(dot, "warning")
-		s.next.SetLabel("Установить и далее")
+		s.next.SetLabel(T("Установить и далее"))
 	}
 
 	s.secondry.ConnectClicked(func() { z.nav.Push(z.driverStep()) })
@@ -176,7 +173,7 @@ func (z *wizard) programStep() *adw.NavigationPage {
 			glib.IdleAdd(func() {
 				s.setBusy(false)
 				if err != nil {
-					s.showMessage("Не удалось установить: "+err.Error(), "error")
+					s.showMessage(T("Не удалось установить: ")+err.Error(), "error")
 					return
 				}
 				z.programInstalled, z.programMenu = true, addMenu
@@ -190,9 +187,9 @@ func (z *wizard) programStep() *adw.NavigationPage {
 // ---------- шаг 1: драйвер SteamVR ----------
 
 func (z *wizard) driverStep() *adw.NavigationPage {
-	s := newWizardStep("Драйвер SteamVR", "preferences-system-symbolic", "Драйвер SteamVR",
-		"Через него трекеры со шлема появляются в SteamVR и играх.")
-	row, dot := s.row("Драйвер picotrackers")
+	s := newWizardStep(T("Драйвер SteamVR"), "preferences-system-symbolic", T("Драйвер SteamVR"),
+		T("Через него трекеры со шлема появляются в SteamVR и играх."))
+	row, dot := s.row(T("Драйвер picotrackers"))
 
 	refresh := func() {
 		state := driverState()
@@ -200,24 +197,24 @@ func (z *wizard) driverStep() *adw.NavigationPage {
 		s.next.SetSensitive(true)
 		switch {
 		case !state.SteamVRFound:
-			row.SetSubtitle("SteamVR не найден: установите SteamVR в Steam и запустите его хотя бы раз")
+			row.SetSubtitle(T("SteamVR не найден: установите SteamVR в Steam и запустите его хотя бы раз"))
 			setDot(dot, "error")
-			s.next.SetLabel("Проверить снова")
+			s.next.SetLabel(T("Проверить снова"))
 		case state.Ready():
-			row.SetSubtitle("Уже установлен и зарегистрирован в SteamVR\n" + driverInstallDir())
+			row.SetSubtitle(T("Уже установлен и зарегистрирован в SteamVR") + "\n" + driverInstallDir())
 			setDot(dot, "success")
-			s.next.SetLabel("Далее")
+			s.next.SetLabel(T("Далее"))
 		default:
-			what := "Будет установлен в " + driverInstallDir()
+			what := Tf("Будет установлен в %s", driverInstallDir())
 			if state.Installed && !state.UpToDate {
-				what = "Будет обновлён до новой версии"
+				what = T("Будет обновлён до новой версии")
 			}
 			if len(state.Others) > 0 {
-				what += "\nСтарые копии драйвера будут отключены"
+				what += "\n" + T("Старые копии драйвера будут отключены")
 			}
 			row.SetSubtitle(what)
 			setDot(dot, "warning")
-			s.next.SetLabel("Установить и далее")
+			s.next.SetLabel(T("Установить и далее"))
 		}
 	}
 	refresh()
@@ -240,7 +237,7 @@ func (z *wizard) driverStep() *adw.NavigationPage {
 				s.setBusy(false)
 				refresh()
 				if err != nil {
-					s.showMessage("Не удалось установить: "+err.Error(), "error")
+					s.showMessage(T("Не удалось установить: ")+err.Error(), "error")
 					return
 				}
 				z.driverInstalled = true
@@ -254,12 +251,12 @@ func (z *wizard) driverStep() *adw.NavigationPage {
 // ---------- шаг 2: приложение на шлем ----------
 
 func (z *wizard) headsetStep() *adw.NavigationPage {
-	s := newWizardStep("Шлем", "drive-removable-media-symbolic", "Приложение на шлем",
-		"Подключите шлем к компьютеру USB-кабелем. В шлеме включите режим разработчика и «Отладку по USB», "+
-			"затем наденьте шлем и разрешите отладку для этого компьютера.")
+	s := newWizardStep(T("Шлем"), "drive-removable-media-symbolic", T("Приложение на шлем"),
+		T("Подключите шлем к компьютеру USB-кабелем. В шлеме включите режим разработчика и «Отладку по USB», "+
+			"затем наденьте шлем и разрешите отладку для этого компьютера."))
 	adbRow, adbDot := s.row("adb (Android Debug Bridge)")
-	headsetRow, headsetDot := s.row("Шлем PICO")
-	s.secondry.SetLabel("Пропустить")
+	headsetRow, headsetDot := s.row(T("Шлем PICO"))
+	s.secondry.SetLabel(T("Пропустить"))
 	s.secondry.SetVisible(true)
 
 	var serial string
@@ -272,44 +269,44 @@ func (z *wizard) headsetStep() *adw.NavigationPage {
 		}
 		serial, state = foundSerial, app
 		if adbFound {
-			adbRow.SetSubtitle("Найден: " + adbPath())
+			adbRow.SetSubtitle(Tf("Найден: %s", adbPath()))
 			setDot(adbDot, "success")
 		} else {
-			adbRow.SetSubtitle("Не найден — нажмите «Скачать adb» (Android platform-tools от Google, ~10 МБ)")
+			adbRow.SetSubtitle(T("Не найден — нажмите «Скачать adb» (Android platform-tools от Google, ~10 МБ)"))
 			setDot(adbDot, "warning")
 		}
 		s.next.SetSensitive(true)
 		switch {
 		case !adbFound:
-			headsetRow.SetSubtitle("Сначала нужен adb")
+			headsetRow.SetSubtitle(T("Сначала нужен adb"))
 			setDot(headsetDot, "dim-label")
-			s.next.SetLabel("Скачать adb")
+			s.next.SetLabel(T("Скачать adb"))
 		case foundSerial == "":
-			headsetRow.SetSubtitle("Не найден — подключите кабель и включите отладку по USB")
+			headsetRow.SetSubtitle(T("Не найден — подключите кабель и включите отладку по USB"))
 			setDot(headsetDot, "dim-label")
-			s.next.SetLabel("Установить и далее")
+			s.next.SetLabel(T("Установить и далее"))
 			s.next.SetSensitive(false)
 		case adbState == "unauthorized":
-			headsetRow.SetSubtitle("Наденьте шлем и разрешите отладку по USB для этого компьютера")
+			headsetRow.SetSubtitle(T("Наденьте шлем и разрешите отладку по USB для этого компьютера"))
 			setDot(headsetDot, "warning")
-			s.next.SetLabel("Установить и далее")
+			s.next.SetLabel(T("Установить и далее"))
 			s.next.SetSensitive(false)
 		case adbState != "device":
-			headsetRow.SetSubtitle(fmt.Sprintf("Шлем %s: %s — переподключите кабель", foundSerial, adbState))
+			headsetRow.SetSubtitle(Tf("Шлем %s: %s — переподключите кабель", foundSerial, adbState))
 			setDot(headsetDot, "warning")
 			s.next.SetSensitive(false)
 		case app == AppInstalled:
-			headsetRow.SetSubtitle(fmt.Sprintf("Подключён (%s) · приложение уже установлено", foundSerial))
+			headsetRow.SetSubtitle(Tf("Подключён (%s) · приложение уже установлено", foundSerial))
 			setDot(headsetDot, "success")
-			s.next.SetLabel("Далее")
+			s.next.SetLabel(T("Далее"))
 		default:
-			what := "приложение будет установлено"
+			what := T("приложение будет установлено")
 			if app == AppOutdated {
-				what = "приложение будет обновлено"
+				what = T("приложение будет обновлено")
 			}
-			headsetRow.SetSubtitle(fmt.Sprintf("Подключён (%s) · %s", foundSerial, what))
+			headsetRow.SetSubtitle(Tf("Подключён (%s) · %s", foundSerial, what))
 			setDot(headsetDot, "success")
-			s.next.SetLabel("Установить и далее")
+			s.next.SetLabel(T("Установить и далее"))
 		}
 	}
 
@@ -364,7 +361,7 @@ func (z *wizard) headsetStep() *adw.NavigationPage {
 					busy = false
 					s.setBusy(false)
 					if err != nil {
-						s.showMessage("Не удалось скачать adb: "+err.Error(), "error")
+						s.showMessage(T("Не удалось скачать adb: ")+err.Error(), "error")
 					}
 					check()
 				})
@@ -396,7 +393,7 @@ func (z *wizard) headsetStep() *adw.NavigationPage {
 				busy = false
 				s.setBusy(false)
 				if err != nil {
-					s.showMessage("Не удалось установить: "+err.Error(), "error")
+					s.showMessage(T("Не удалось установить: ")+err.Error(), "error")
 					return
 				}
 				z.appInstalled = true
@@ -410,43 +407,43 @@ func (z *wizard) headsetStep() *adw.NavigationPage {
 // ---------- итог ----------
 
 func (z *wizard) doneStep() *adw.NavigationPage {
-	s := newWizardStep("Готово", "object-select-symbolic", "Готово",
-		"Подключитесь со шлема через Steam Link — трекинг включится сам.")
+	s := newWizardStep(T("Готово"), "object-select-symbolic", T("Готово"),
+		T("Подключитесь со шлема через Steam Link — трекинг включится сам."))
 	if selfInstall {
-		programRow, programDot := s.row("Программа")
+		programRow, programDot := s.row(T("Программа"))
 		switch {
 		case !z.programInstalled:
-			programRow.SetSubtitle("Не установлена — запускайте этот файл (мастер можно открыть позже)")
+			programRow.SetSubtitle(T("Не установлена — запускайте этот файл (мастер можно открыть позже)"))
 			setDot(programDot, "dim-label")
 		default:
-			text := "Установлена: " + installedExecutable()
+			text := Tf("Установлена: %s", installedExecutable())
 			if z.programMenu {
-				text += "\nЕсть в меню приложений: «PICO Trackers»"
+				text += "\n" + T("Есть в меню приложений: «PICO Trackers»")
 			}
 			if !programState().Running {
-				text += "\nСкачанный файл больше не нужен — его можно удалить"
+				text += "\n" + T("Скачанный файл больше не нужен — его можно удалить")
 			}
 			programRow.SetSubtitle(text)
 			setDot(programDot, "success")
 		}
 	}
-	driverRow, driverDot := s.row("Драйвер SteamVR")
+	driverRow, driverDot := s.row(T("Драйвер SteamVR"))
 	if steamVRNeedsRestart() {
-		driverRow.SetSubtitle("Установлен. SteamVR уже запущен — перезапустите его, чтобы загрузить драйвер")
+		driverRow.SetSubtitle(T("Установлен. SteamVR уже запущен — перезапустите его, чтобы загрузить драйвер"))
 		setDot(driverDot, "warning")
 	} else {
-		driverRow.SetSubtitle("Установлен и зарегистрирован")
+		driverRow.SetSubtitle(T("Установлен и зарегистрирован"))
 		setDot(driverDot, "success")
 	}
-	appRow, appDot := s.row("Приложение на шлеме")
+	appRow, appDot := s.row(T("Приложение на шлеме"))
 	if z.appInstalled {
-		appRow.SetSubtitle("Установлено, сервис запущен. USB-кабель можно отключить")
+		appRow.SetSubtitle(T("Установлено, сервис запущен. USB-кабель можно отключить"))
 		setDot(appDot, "success")
 	} else {
-		appRow.SetSubtitle("Пропущено — мастер можно открыть позже: Настройки → Мастер установки")
+		appRow.SetSubtitle(T("Пропущено — мастер можно открыть позже: Настройки → Мастер установки"))
 		setDot(appDot, "dim-label")
 	}
-	s.next.SetLabel("Начать")
+	s.next.SetLabel(T("Начать"))
 	s.next.ConnectClicked(func() {
 		cfg := loadConfig()
 		cfg.WizardDone = true

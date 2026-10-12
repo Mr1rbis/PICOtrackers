@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"sync"
@@ -15,6 +16,8 @@ const (
 	driverTimeout       = 3 * time.Second // без состояния от драйвера — связи нет
 	headsetStatsTimeout = 3 * time.Second
 	headsetRetry        = 5 * time.Second
+	calibrationTimeout  = 3 * time.Second // шлем отвечает на просьбу откалибровать трекеры в пакете состояния (раз в 1 с)
+	lowBattery          = 20              // %: заряд трекера PICO ниже — предупреждение
 )
 
 // DriverStatus — JSON, который драйвер шлёт раз в 0.5 с (driver/src/driver.cpp, status_json).
@@ -42,6 +45,48 @@ type DriverStatus struct {
 		Added   bool   `json:"added"`
 		Valid   bool   `json:"valid"`
 	} `json:"trackers"`
+	Pico *PicoStatus `json:"pico"` // nil — шлем не присылает (приложение на шлеме до 1.7)
+}
+
+// PicoStatus — трекеры PICO по словам шлема (common/protocol.h, StatusPacket). -1 — неизвестно.
+type PicoStatus struct {
+	Status             int `json:"status"`     // 0 нет данных, 1 точные, 2 неточные
+	Error              int `json:"error"`      // при status 0: 1 не откалиброваны, 2 мало трекеров…
+	Calibrated         int `json:"calibrated"` // 1 да, 0 нет
+	Count              int `json:"count"`      // подключено трекеров
+	CalibrationRequest int `json:"calibration_request"`
+	CalibrationResult  int `json:"calibration_result"`
+	Trackers           []struct {
+		ID      int `json:"id"`
+		Battery int `json:"battery"` // %, -1 — неизвестен
+	} `json:"trackers"`
+}
+
+const (
+	picoErrorNotCalibrated = 1
+	picoErrorNotEnough     = 2
+	picoNotRequested       = -32768 // CalibrationResult: шлем ещё не получал просьб откалибровать трекеры
+)
+
+// NotCalibrated — трекеры подключены, но не откалиброваны: нужна кнопка «Откалибровать».
+func (p *PicoStatus) NotCalibrated() bool {
+	if p == nil || p.Status == 1 || p.Status == 2 || p.Count == 0 {
+		return false
+	}
+	return (p.Status == 0 && p.Error == picoErrorNotCalibrated) || (p.Calibrated == 0 && p.Count > 0)
+}
+
+// Batteries — заряд подключённых трекеров PICO, % (только известный).
+func (p *PicoStatus) Batteries() (levels []int) {
+	if p == nil {
+		return nil
+	}
+	for _, t := range p.Trackers {
+		if t.Battery >= 0 {
+			levels = append(levels, t.Battery)
+		}
+	}
+	return
 }
 
 // Snapshot — копия состояния для отрисовки интерфейса.
@@ -65,6 +110,7 @@ type Snapshot struct {
 	Tracking       bool
 	Rate           int
 	Trackers       []string // nil — набор ещё не известен
+	Calibrating    bool     // открываем калибровку трекеров PICO на шлеме
 }
 
 // Poses — позы всех суставов (STAGE шлема) для 3D-вида.
@@ -102,15 +148,19 @@ type Controller struct {
 	poses          Poses
 	posesAt        time.Time
 	steamVRRunning bool
+	calibration    int       // номер последней просьбы откалибровать трекеры (уходит драйверу в PTA1)
+	calibrateUntil time.Time // до этого времени просьба идёт в командах драйверу
+	calibrating    bool
 }
 
 func NewController(onLog, onToast func(string)) (*Controller, error) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: appPort})
 	if err != nil {
-		return nil, fmt.Errorf("не удалось открыть UDP-порт %d (программа уже запущена?): %w", appPort, err)
+		return nil, fmt.Errorf(T("не удалось открыть UDP-порт %d (программа уже запущена?): %w"), appPort, err)
 	}
 	c := &Controller{onLog: onLog, onToast: onToast, conn: conn, closing: make(chan struct{}),
-		wake: make(chan struct{}, 1), cfg: loadConfig(), driverState: driverState()}
+		wake: make(chan struct{}, 1), cfg: loadConfig(), driverState: driverState(),
+		calibration: 1 + rand.IntN(60000)} // не с 1: драйвер помнит номер прошлой просьбы
 	go c.receiveDriver()
 	go c.watchSteamVR()
 	go c.connectLoop()
@@ -125,6 +175,7 @@ func (c *Controller) Snapshot() Snapshot {
 		HeadsetError: c.headsetError, AdbConnected: c.adbConnected, Listener: c.listener,
 		ServiceKnown: c.serviceKnown, ServiceRunning: c.serviceRunning, ServiceChange: c.serviceChange, ServiceOff: c.cfg.ServiceOff,
 		SteamVRRunning: c.steamVRRunning, Tracking: c.cfg.trackingEnabled(), Rate: c.cfg.rate(),
+		Calibrating: c.calibrating,
 	}
 	if c.headset != nil {
 		s.HeadsetSerial, s.HeadsetWifi = c.headset.Serial, c.headset.OverWifi()
@@ -166,6 +217,18 @@ func (c *Controller) SetTracking(enabled bool) {
 	c.SendCommand()
 }
 
+// SetLanguage запоминает язык интерфейса (применится после перезапуска); false — он уже такой.
+func (c *Controller) SetLanguage(language string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cfg.Language == language {
+		return false
+	}
+	c.cfg.Language = language
+	c.cfg.save()
+	return true
+}
+
 func (c *Controller) SetTrackers(names []string) {
 	var ordered []string
 	for _, t := range trackers {
@@ -196,8 +259,12 @@ func (c *Controller) SendCommand() {
 		tracking = 1
 	}
 	rate := c.cfg.rate()
+	calibrate := ""
+	if time.Now().Before(c.calibrateUntil) {
+		calibrate = fmt.Sprintf(" calibrate=%d", c.calibration)
+	}
 	c.mu.Unlock()
-	message := fmt.Sprintf("PTA1 tracking=%d rate=%d trackers=%s", tracking, rate, list)
+	message := fmt.Sprintf("PTA1 tracking=%d rate=%d trackers=%s%s", tracking, rate, list, calibrate)
 	c.conn.WriteToUDP([]byte(message), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: dataPort})
 }
 
@@ -245,7 +312,7 @@ func (c *Controller) receiveDriver() {
 		}
 		c.mu.Unlock()
 		if reconnected {
-			c.onLog("драйвер SteamVR на связи")
+			c.onLog(T("драйвер SteamVR на связи"))
 		}
 	}
 }
@@ -264,7 +331,7 @@ func (c *Controller) watchSteamVR() {
 		c.steamVRRunning, c.driverState, c.restartSteamVR = running, state, restart
 		c.mu.Unlock()
 		if changed {
-			c.onLog(map[bool]string{true: "SteamVR запущен", false: "SteamVR закрыт"}[running])
+			c.onLog(map[bool]string{true: T("SteamVR запущен"), false: T("SteamVR закрыт")}[running])
 		}
 	}
 }
@@ -337,14 +404,15 @@ func (c *Controller) tryConnect(cfg *Config) {
 	c.headset, c.headsetError, c.appState, c.appKnown = headset, "", state, true
 	c.mu.Unlock()
 	if state == AppMissing {
-		c.onLog("приложение на шлеме не установлено — откройте мастер установки")
+		c.onLog(T("приложение на шлеме не установлено — откройте мастер установки"))
 		return
 	}
+	allowBackgroundCalibration(headset)
 	if cfg.ServiceOff {
 		// Выключен кнопкой — не включаем, только следим за состоянием.
 		c.checkService(headset)
 	} else if err := startService(headset); err != nil {
-		c.onLog("не удалось запустить сервис на шлеме: " + err.Error())
+		c.onLog(T("не удалось запустить сервис на шлеме: ") + err.Error())
 		return
 	} else {
 		// dumpsys видит сервис не сразу. Если его выключили на самом шлеме (приложение 1.6+), он не запустится —
@@ -355,7 +423,7 @@ func (c *Controller) tryConnect(cfg *Config) {
 		headset:      headset,
 		OnStats:      c.onStats,
 		OnListener:   c.onListener,
-		OnMessage:    func(text string) { c.onLog("шлем: " + text) },
+		OnMessage:    func(text string) { c.onLog(T("шлем: ") + text) },
 		OnConnection: c.onAdb,
 	}
 	follower.Start()
@@ -363,9 +431,9 @@ func (c *Controller) tryConnect(cfg *Config) {
 	c.follower = follower
 	c.mu.Unlock()
 	if cfg.ServiceOff {
-		c.onLog("шлем на связи (" + headset.Serial + "), сервис выключен вами — сама программа его не включает")
+		c.onLog(Tf("шлем на связи (%s), сервис выключен вами — сама программа его не включает", headset.Serial))
 	} else {
-		c.onLog("шлем на связи (" + headset.Serial + "), сервис запущен")
+		c.onLog(Tf("шлем на связи (%s), сервис запущен", headset.Serial))
 	}
 }
 
@@ -379,7 +447,7 @@ func (c *Controller) onListener(text string) {
 	c.mu.Lock()
 	c.listener = text
 	c.mu.Unlock()
-	c.onLog("шлем: " + text)
+	c.onLog(T("шлем: ") + text)
 	switch {
 	case strings.HasPrefix(text, "waiting"): // сервис только что запустился
 		c.setService(true)
@@ -409,7 +477,7 @@ func (c *Controller) setService(running bool) {
 	c.serviceKnown, c.serviceRunning = true, running
 	c.mu.Unlock()
 	if changed && !running {
-		c.onLog("сервис на шлеме выключен — без него трекинг не передаётся; включить: кнопка «Включить сервис»")
+		c.onLog(T("сервис на шлеме выключен — без него трекинг не передаётся; включить: кнопка «Включить сервис»"))
 	}
 }
 
@@ -419,9 +487,9 @@ func (c *Controller) onAdb(connected bool) {
 	c.adbConnected = connected
 	c.mu.Unlock()
 	if changed && connected {
-		c.onLog("adb: шлем на связи")
+		c.onLog(T("adb: шлем на связи"))
 	} else if changed {
-		c.onLog("adb: связь со шлемом потеряна (трекингу это не мешает)")
+		c.onLog(T("adb: связь со шлемом потеряна (трекингу это не мешает)"))
 	}
 }
 
@@ -432,7 +500,7 @@ func (c *Controller) ToggleService() {
 	c.mu.Unlock()
 	switch {
 	case !known:
-		c.onToast("Шлем не на связи по adb")
+		c.onToast(T("Шлем не на связи по adb"))
 	case running:
 		c.StopService()
 	default:
@@ -449,7 +517,7 @@ func (c *Controller) StopService() {
 		defer c.endServiceChange()
 		c.setServiceOff(true)
 		if err := setServiceEnabled(headset, false); err != nil {
-			c.onLog("не удалось выключить сервис на шлеме: " + err.Error())
+			c.onLog(T("не удалось выключить сервис на шлеме: ") + err.Error())
 		}
 		c.checkService(headset)
 	}()
@@ -465,12 +533,12 @@ func (c *Controller) StartService() {
 		defer c.endServiceChange()
 		c.setServiceOff(false)
 		if err := setServiceEnabled(headset, true); err != nil {
-			c.onLog("не удалось запустить сервис на шлеме: " + err.Error())
-			c.onToast("Не удалось включить сервис на шлеме")
+			c.onLog(T("не удалось запустить сервис на шлеме: ") + err.Error())
+			c.onToast(T("Не удалось включить сервис на шлеме"))
 			return
 		}
 		c.setService(true) // dumpsys видит сервис не сразу; следующая проверка (через 5 с) уточнит
-		c.onLog("сервис на шлеме включён")
+		c.onLog(T("сервис на шлеме включён"))
 	}()
 }
 
@@ -480,7 +548,7 @@ func (c *Controller) beginServiceChange(change string) *Headset {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.headset == nil {
-		c.onToast("Шлем не на связи по adb")
+		c.onToast(T("Шлем не на связи по adb"))
 		return nil
 	}
 	if c.serviceChange != "" {
@@ -502,6 +570,79 @@ func (c *Controller) endServiceChange() {
 	c.mu.Lock()
 	c.serviceChange = ""
 	c.mu.Unlock()
+}
+
+// CalibrateTrackers открывает на шлеме калибровку трекеров PICO: просьба уходит через драйвер SteamVR
+// (так работает и без adb), шлем открывает калибровку через рантайм или запуском приложения калибровки
+// и отвечает в пакете состояния. Не вышло или нет ответа — открываем приложение калибровки по adb.
+func (c *Controller) CalibrateTrackers() {
+	c.mu.Lock()
+	if c.calibrating {
+		c.mu.Unlock()
+		return
+	}
+	c.calibrating = true
+	c.calibration = c.calibration%65535 + 1
+	request := c.calibration
+	viaDriver := c.driver != nil && time.Since(c.driverAt) < driverTimeout && c.driver.Data
+	if viaDriver {
+		c.calibrateUntil = time.Now().Add(calibrationTimeout)
+	}
+	c.mu.Unlock()
+	c.onLog(T("открываю калибровку трекеров PICO на шлеме"))
+	if viaDriver {
+		c.SendCommand()
+	}
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			c.calibrating, c.calibrateUntil = false, time.Time{}
+			c.mu.Unlock()
+		}()
+		result, answered := 0, false
+		for deadline := time.Now().Add(calibrationTimeout); viaDriver && time.Now().Before(deadline); {
+			time.Sleep(100 * time.Millisecond)
+			c.mu.Lock()
+			if d := c.driver; d != nil && d.Pico != nil && d.Pico.CalibrationRequest == request &&
+				d.Pico.CalibrationResult != picoNotRequested {
+				result, answered = d.Pico.CalibrationResult, true
+			}
+			c.mu.Unlock()
+			if answered {
+				break
+			}
+		}
+		// 0 — открыл рантайм, 1 — запущено приложение калибровки, 2 — запущено, но Android мог не дать
+		// фоновому сервису показать окно; < 0 — не получилось (common/protocol.h, TrackingService.java).
+		if answered && (result == 0 || result == 1) {
+			c.onLog(Tf("шлем открыл калибровку трекеров (%d)", result))
+			c.onToast(T("Калибровка открыта на шлеме — наденьте его"))
+			return
+		}
+		c.mu.Lock()
+		headset := c.headset
+		c.mu.Unlock()
+		if answered {
+			c.onLog(Tf("шлем не смог открыть калибровку сам (%d)", result))
+		} else if viaDriver {
+			c.onLog(T("шлем не ответил на просьбу открыть калибровку"))
+		}
+		if headset == nil {
+			if answered && result == 2 {
+				c.onToast(T("Калибровка запущена — если её не видно, откройте «Motion Tracker» на шлеме"))
+			} else {
+				c.onToast(T("Не удалось открыть калибровку — откройте «Motion Tracker» на шлеме"))
+			}
+			return
+		}
+		if err := launchCalibrationApp(headset); err != nil {
+			c.onLog(T("не удалось открыть калибровку по adb: ") + err.Error())
+			c.onToast(T("Не удалось открыть калибровку — откройте «Motion Tracker» на шлеме"))
+			return
+		}
+		c.onLog(T("калибровка трекеров открыта на шлеме по adb"))
+		c.onToast(T("Калибровка открыта на шлеме — наденьте его"))
+	}()
 }
 
 func (c *Controller) Close() {

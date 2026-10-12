@@ -1,6 +1,6 @@
 # CLAUDE.md — PICOtrackers
 
-Всё, что известно о проекте на 2026-10-10. Общение с пользователем — на русском.
+Всё, что известно о проекте на 2026-10-13. Общение с пользователем — на русском.
 Репозиторий: git, GitHub **`Mr1rbis/PICOtrackers`** (ветка main), релизы собирает CI по тегу `v<appVersion>`.
 
 ## Цель
@@ -102,6 +102,24 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
     `service/disabled` — BootReceiver и открытие приложения его не запускают). Проверено во вложенном KWin с
     поддельным adb, изображающим приложение 1.6 (6 шагов: автозапуск → выкл → перезапуск без автозапуска → вкл →
     автозапуск → выключен на самом шлеме). Java-часть на реальном шлеме не проверена.
+12. ✅ Версия 1.7 (2026-10-12/13, по просьбе пользователя; всё — «в виртуальной среде», шлем не был подключён):
+    - **Кнопка «Откалибровать»** — когда трекеры PICO подключены, но не откалиброваны (код рантайма error 1, см.
+      «Трекеры PICO: калибровка и заряд»): программа → драйвер (PTA1 `calibrate=N`) → шлем (PTC1 команда 3) →
+      `xrStartBodyTrackingCalibAppBD`, иначе запуск приложения калибровки `com.pvr.swift`; не вышло — программа
+      открывает его по adb. Кнопка есть и в приложении на шлеме.
+    - **Заряд трекеров PICO** — в программе (строка «Трекеры PICO», < 20 % — предупреждение) и в SteamVR (у всех
+      трекеров — самый низкий заряд). Источник — `libtrackingclient.pxr.so` на шлеме (сначала была `libpxr_api.so` —
+      на шлеме её нет; переделано 2026-10-13 после проверки на шлеме: 2 трекера, 8/10, calibrated 0).
+    - **Английский интерфейс**: программа (T/Tf/N + i18n_en.go, тест на полноту), мастер, установщик Windows
+      ([CustomMessages] en/ru), приложение на шлеме (L.java по Locale). Язык — как в системе, в настройках можно сменить
+      (перезапуск: execve на Linux, новый процесс с --wait-pid на Windows).
+    - **AppImage** (со своими GTK и glibc, запуск через ld-linux из образа) и **Flatpak** (runtime GNOME 51).
+    Проверено: драйвер — поддельным vrserver (27 проверок: PTS1, заряд в свойствах, просьба калибровки, без PTS1);
+    программа — во вложенном KWin (англ./рус., кнопка калибровки и путь через adb, смена языка с перезапуском, мастер);
+    AppImage — на хосте через FUSE и в Docker: Ubuntu 24.04 (X11, без системной GTK вообще), Debian 13 (Wayland,
+    русская локаль), Fedora 43, самообновление AppImage с локального «релиза» (файл подменён, драйвер переустановлен,
+    перезапуск с --wait-pid); Flatpak — в образе flatpak-github-actions:gnome-51 (установка бандла, окно, драйвер в
+    ~/.var/app, `flatpak-spawn --host pgrep` через flatpak-session-helper). APK собран, на шлеме не запускался.
 
 ## Железо и окружение
 
@@ -115,7 +133,7 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   `libAlgSwiftBodyPose*.so` (Swift = Motion Trackers). Приложение трекеров — `com.pvr.swift` («Motion Tracker» 2.0.4).
 - Сопряжены 2 трекера (`mBindTrackerCount 2`). Свойства: `persist.pxr.tracking.swiftVersion=2`,
   `ro.pxr.support.swiftversion=3`, `debug.pxr.tracking.swift_body_tracking_mode=0`.
-- Установлено: PICO Trackers `dev.picotrackers.headset` v1.2 (в репозитории уже 1.6; пробник `dev.picotrackers.probe` удалён), Steam Link `com.valvesoftware.steamlinkvr` 2.0.22 (активности `com.valvesoftware.steamlink.SteamLink`
+- Установлено: PICO Trackers `dev.picotrackers.headset` v1.2 (в репозитории уже 1.7; пробник `dev.picotrackers.probe` удалён), Steam Link `com.valvesoftware.steamlinkvr` 2.0.22 (активности `com.valvesoftware.steamlink.SteamLink`
   — меню, `.VRLink` — стрим), ALVR `alvr.client.stable` 20.14.1 и `alvr.client.dev` (nightly 2026.06.06),
   Virtual Desktop 1.34.22, VRChat, Connect (`com.picovr.picostreamassistant`).
 - Шлем засыпает, когда снят (датчик приближения): `dumpsys power` → `mWakefulness=Asleep`, `Display Power: state=OFF`.
@@ -132,6 +150,15 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   либо `sudo pacman -S cmake ninja`, либо без изменений в системе: `python3 -m venv <scratchpad>/buildtools &&
   <…>/bin/pip install cmake ninja` (cmake 4.4, ninja 1.13 — оба build.sh с ними собирают) и этот `bin` первым в PATH.
   Старые папки CMake (`driver/build/cmake-*`, `headset/build/cmake`) помнили `/usr/bin/ninja` — их пришлось удалить.
+- На 2026-10-12 в системе уже **GNOME 51**: GTK 4.24.1, libadwaita 1.10, GLib 2.90, gdk-pixbuf 2.44.8 (картинки — через
+  glycin, своих загрузчиков у gdk-pixbuf больше нет). После обновления GTK кэш cgo-биндингов gotk4 сбрасывается: первая
+  сборка снова ~13 мин (Windows — тоже, если обновился mingw-gcc; на 2026-10-12 — gcc 16.2).
+- **AppImageLauncher** установлен и перехватывает запуск любого AppImage через binfmt_misc (`appimage-type2`, флаг F,
+  магия `AI\x02` по смещению 8 — действует на всё ядро, и в контейнерах): показывает своё окно **на экране
+  пользователя**. Проверять AppImage только копией с обнулённой магией (`printf '\0\0\0' | dd of=x.AppImage bs=1
+  seek=8 conv=notrunc`; runtime её не проверяет) или с `APPIMAGELAUNCHER_DISABLE=1`.
+- flatpak и flatpak-builder в системе не установлены — Flatpak собирается и проверяется в Docker
+  (`ghcr.io/flathub-infra/flatpak-github-actions:gnome-51`, 8 ГБ, с GNOME 51 runtime и SDK).
 
 **Особенности окружения Claude Code**
 - В окружении задан `HTTP(S)_PROXY`. **`git clone` с GitHub через него не работает** («Proxy CONNECT aborted»),
@@ -154,16 +181,36 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
     (`Format`, `LoadStringsFromFile`, `Utf8Decode`, склейка `+` — нормально). Сообщения готовит программа.
 - **Проверка окон программы без экрана пользователя** (2026-10-10): `dbus-run-session -- kwin_wayland --virtual
   --width 1100 --height 1000 --socket <имя> --xwayland --exit-with-session <скрипт, пишущий env и спящий>`; программу
-  запускать с `GDK_BACKEND=x11`, отдельным `HOME`, `PATH` с поддельным `adb` (скрипт, отвечающий на devices / pm path /
-  sha256sum / install), снимки — `import -window <id из xdotool search>`. Мышь и клавиатура xdotool в этот Xwayland
-  **не доходят** — кнопки нажимать через AT-SPI: в том же D-Bus запустить `/usr/lib/at-spi-bus-launcher
-  --launch-immediately` и `/usr/lib/at-spi2-registryd`, программу без `NO_AT_BRIDGE`, Python `gi` Atspi →
-  `get_action_iface().do_action(0)`. GTK 4.22 иногда падает (SIGABRT, `gtk_at_spi_root_to_ref` assertion), если
-  AT-SPI-клиент обходит дерево сразу после закрытия диалога — артефакт теста, не программы.
-- Если запущена программа пользователя (занят UDP 7790), тестовую копию запускать в своём сетевом пространстве:
-  `unshare --user --map-current-user --net …` (с `--map-current-user` uid прежний — D-Bus принимает EXTERNAL-авторизацию;
-  `ip link set lo up` там запрещён, но привязка к 127.0.0.1 работает). Всплывающее меню GTK под Xwayland — отдельное
+  запускать с `GDK_BACKEND=x11` (**явно**: в окружении Claude Code задан `GDK_BACKEND=wayland`, и окно уходит на
+  Wayland, невидимый для xdotool/import), отдельным `HOME`, `PATH` с поддельным `adb` (скрипт, отвечающий на devices /
+  pm path / sha256sum / install / dumpsys / logcat / am start / resolve-activity), снимки — `import -window <id из
+  xdotool search>`; окна Wayland — `QT_QPA_PLATFORM=wayland spectacle -b -n -f -o файл.png` в окружении вложенной
+  сессии (KWin ScreenShot2 по D-Bus чужим процессам отказывает). Мышь и клавиатура xdotool в этот Xwayland
+  **не доходят** (и `Atspi.generate_keyboard_event` тоже): KWin 6 пропускает эмуляцию ввода (XTEST → EIS) только после
+  разрешения пользователя и вешает в невидимой сессии окно `kwin_eis_prompter --client xdotool` — кнопки нажимать через AT-SPI: в том же D-Bus запустить
+  `/usr/lib/at-spi-bus-launcher --launch-immediately` и `/usr/lib/at-spi2-registryd`, программу без `NO_AT_BRIDGE`,
+  Python `gi` Atspi → `get_action_iface().do_action(0)`; вкладки ViewSwitcher («page tab») — через
+  `parent.get_selection_iface().select_child(i)`. **AdwComboRow (выбор языка) через AT-SPI не управляется** (нет
+  действий) — смену языка проверяли копией пакета в scratchpad с крючком (файл с `testHook`), вызывающим тот же
+  `w.restart()`. Действия приложения (`app.wizard` и т.п.) — `gdbus call … org.gtk.Actions.Activate`. GTK 4.22 иногда
+  падает (SIGABRT, `gtk_at_spi_root_to_ref` assertion), если AT-SPI-клиент обходит дерево сразу после закрытия
+  диалога — артефакт теста, не программы.
+- **Вложенная сессия KWin поднимает свои порталы, в т.ч. xdg-document-portal, и он монтирует `/run/user/1000/doc`**
+  (если у сессии пользователя свой портал документов в этот момент не запущен). После проверок — гасить вложенную
+  сессию (`kill` dbus-run-session/kwin_wayland по PID) и убедиться, что этот FUSE отмонтирован.
+- Тестовую копию программы — в своём сетевом пространстве с поднятым lo и прежним uid (D-Bus вложенной сессии
+  проверяет uid): `unshare -rn sh -c 'ip link set lo up; exec unshare --user --map-user=1000 --map-group=1000 <команда>'`.
+  Просто `unshare --user --map-current-user --net` не годится: lo там опущен, и отправка на 127.0.0.1 падает с
+  «Network is unreachable» (поддельный драйвер не может слать состояние). Всплывающее меню GTK под Xwayland — отдельное
   окно X: искать `xdotool search --onlyvisible --name ''` по размеру и снимать `import -window <id>`.
+- **AppImage и Flatpak в Docker** (2026-10-12): образы `ptest-ubuntu` (24.04), `ptest-debian` (13, с локалью ru_RU),
+  `ptest-fedora` (43) = базовый + fontconfig, шрифты DejaVu, python3, procps. Контейнер: `--network none --user 1000:1000`,
+  в него — только сокеты вложенной сессии (`/tmp/.X11-unix/X2`, Wayland `ptkwin`, D-Bus `unix:path=/tmp/dbus-…`, при
+  нужде AT-SPI `/run/user/1000/at-spi/bus_2`), `APPIMAGE_EXTRACT_AND_RUN=1` (FUSE в контейнере нет). Flatpak: образ
+  flatpak-github-actions `--privileged`, `flatpak --user install --no-deps --bundle` (без сети runtime-repo не скачать),
+  `flatpak run --no-documents-portal`, поддельный adb — в `~/.var/app/<id>/data/picotrackers/platform-tools/adb`
+  (PATH песочницы свой), `/app/libexec/flatpak-session-helper` на шине вложенной сессии — тогда
+  `flatpak-spawn --host` выполняется в контейнере.
 - **SteamVR на этом ПК** (2026-10-11): vrcompositor падает (SIGSEGV, вызов по нулевому указателю в главном потоке,
   стек vrcompositor/vrclient.so/libX11/SDL3) почти при каждом закрытии SteamVR с 2026-10-01 — и без нашего драйвера
   (он в компоновщик не грузится). Ошибка **303** «Основной компонент SteamVR работает со сбоями» = vrmonitor не получил
@@ -227,6 +274,39 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
     17 R_SHOULDER, 18 L_ELBOW, 19 R_ELBOW, 20 L_WRIST, 21 R_WRIST, 22 L_HAND, 23 R_HAND.
     `BODY_WITHOUT_ARM` = первые 16 суставов.
 
+### Трекеры PICO: калибровка и заряд (2026-10-12, по исходникам и бинарникам SDK — шлем не был подключён)
+- **Коды `xrGetBodyTrackingStateBD`** (PICO Unity SDK `PXR_Type.cs`, ALVR `body_tracking_bd.rs`): status 0 INVALID
+  (данных нет), 1 VALID, 2 LIMITED (неточные); error (BodyTrackingMessage) 0 UNKNOWN/INNER, **1 TRACKER_NOT_CALIBRATED**,
+  **2 TRACKER_NUM_NOT_ENOUGH**, 3 STATE_NOT_SATISFIED, 4 PERSISTENT_INVISIBILITY, 5 DATA_ERROR, 6 USER_CHANGE,
+  7 TRACKING_POSE_ERROR. «Подключены, но не откалиброваны» = status 0 и error 1 (какие коды реально приходят на
+  PICO 4 Pro — смотреть строку logcat `body tracking state: status=… error=…`).
+- **Калибровка**: ALVR — `xrStartBodyTrackingCalibAppBD(instance, "", 1)` при status 0 или error 1 (из фокусного
+  приложения; из нашей фоновой IDLE-сессии не проверено). PICO SDK 3.x (`libPxrPlatform.so`) зовёт
+  `xrStartBodyTrackingCalibrationAppPICO(instance)` (дизассемблер: только instance). PICO SDK 2.5.0
+  (`UPxr_OpenFitnessBandCalibrationAPP`) просто запускал launcher-активность `com.pvr.swift` с extra
+  `enter_flag` = пакет вызывающего — то же делают наш сервис (если рантайм не смог) и программа по adb
+  (`cmd package resolve-activity --brief … com.pvr.swift` → `am start -n … --es enter_flag com.valvesoftware.steamlinkvr`).
+  Фоновому сервису Android 10 запускать активности не даёт без SYSTEM_ALERT_WINDOW — программа выдаёт его
+  `appops set dev.picotrackers.headset SYSTEM_ALERT_WINDOW allow`.
+- **Проверено на шлеме 2026-10-13: у неоткалиброванных (но подключённых) трекеров `xrGetBodyTrackingStateBD` отвечает
+  `status=0 error=0`** — так же, как без трекеров; error 1 из документации не приходит. Подключение, калибровку и заряд
+  поэтому берём не из рантайма.
+- **Заряд, подключение, калибровка — `/system/lib64/libtrackingclient.pxr.so`** (есть в `/system/etc/public.libraries-pxr.txt`,
+  приложениям можно; проверено из приложения): C-обёртки над `pvr::TrackingClient` (Swift — внутреннее имя Motion
+  Tracker): `void* CreateClient()` (= `TrackingClient::getInstance()`, синглтон; DestroyClient — пустая),
+  `int GetSwiftConnectState(client, SwiftConnectState*)` — 13 байт `{u8 num; u8 ids[12]}`, `int GetSwiftCalibState(client,
+  int*)` (0 — не откалиброваны), `int GetSwiftTrackerBattery(client, int id, int*)` (= GetSwiftBattery; id — номер из
+  ids, на шлеме 1 и 2; id 0 → −1), `int getSwiftTrackerMaxBattery(client, int*)` (= 10), ответ 0 — успех (103 — client
+  NULL, 101 — нет связи с сервисом). На шлеме: `trackers=2 #1=8 #2=8 calibrated=0 max=10`. Ещё есть
+  `startSwiftCalibration`, `getSwiftTrackerInfo(client, TrackerInfo*)`, колбэки — не разобраны.
+  В PICO SDK 2.5.0 то же было `Pxr_GetFitnessBand*` из `libpxr_api.so` (обёртка), но **на PICO OS 5.13 `libpxr_api.so`
+  нет** (первая версия 1.7 искала её — заряда не было). В SDK 3.x — `xrGetBodyTrackerBatteryPICO` и т.п. (у рантайма 4 Pro нет).
+  Первый опрос застрахован (TrackingService: метка `pxr_probing`). Проверка из adb shell: маленькая C-программа
+  (NDK `aarch64-linux-android29-clang`, dlopen) в `/data/local/tmp` — шеллу библиотека тоже доступна.
+- Референсы: github.com/Pico-Developer/PICO-Unity-Integration-SDK (ветки release_2.5.0 … 3.4.0; `Runtime/Android/
+  PxrPlatform.aar` — нативная `libPxrPlatform.so`, разбирать llvm-objdump из NDK), ALVR `body_tracking_bd.rs`.
+  WiVRn заряд трекеров PICO не передаёт.
+
 **Полезные теги logcat шлема**: `PicoTrackers` (наше приложение), `PvrTrackingService-MCUTracker` (`mTrackerConnectCount`,
 `mBindTrackerCount`, `mAlgRuningBodyTracking`), `APxrRuntime`, `xrt_session`, `PxrLoader`, буфер `-b crash`.
 
@@ -240,29 +320,38 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
 
 ```
 CLAUDE.md, README.md (для людей на GitHub: русский + английский, дисклеймер «100% ИИ»), .gitignore
-.github/workflows/build.yml   CI (GitHub Actions): driver ‖ headset → linux ‖ windows → release (на тег v<appVersion>)
-common/protocol.h              UDP-протокол: Packet (PTB1, шлем→драйвер), ControlPacket (PTC1, драйвер→шлем),
-                               порты 7788/7789/7790, флаги, индексы суставов (= XrBodyJointBD)
-headset/                       приложение для шлема, пакет dev.picotrackers.headset v1.6, «PICO Trackers»
+.github/workflows/build.yml   CI (GitHub Actions): driver ‖ headset → linux (+AppImage) → flatpak ‖ windows → release
+common/protocol.h              UDP-протокол: Packet (PTB1, шлем→драйвер), StatusPacket (PTS1, трекеры PICO),
+                               ControlPacket (PTC1, драйвер→шлем), порты 7788/7789/7790, флаги, индексы суставов
+headset/                       приложение для шлема, пакет dev.picotrackers.headset v1.7, «PICO Trackers»
   AndroidManifest.xml          2D-приложение (без pvr.app.type=vr); TrackingService exported с permission
                                DUMP (запускать может только adb shell и само приложение); BootReceiver
   build.sh / fetch_deps.sh     сборка без Gradle → build/PicoTrackers.apk; loader PICO + заголовки Khronos (sha256)
   debug.keystore               ключ подписи (alias probe, пароль android; gitignore). НЕ удалять (иначе install -r
                                не пройдёт — программа тогда переустанавливает приложение). В CI — секрет HEADSET_KEYSTORE_BASE64
   cpp/tracking.cpp             loader, instance, headless-сессия, трекер тела, цикл 100 Гц, UDP, JNI (start/stop/running/status)
-  src/…/TrackingService.java   постоянный foreground-сервис: слушатель UDP 7789, автостарт/стоп трекинга, WifiLock+MulticastLock
+  cpp/pico_trackers.*          трекеры PICO: libtrackingclient.pxr.so (подключение, заряд, калибровка), калибровка через рантайм, PTS1
+  src/…/TrackingService.java   постоянный foreground-сервис: слушатель UDP 7789, автостарт/стоп трекинга, WifiLock+MulticastLock,
+                               команда «откалибровать», опрос трекеров раз в 5 с (со страховкой от падения)
   src/…/BootReceiver.java      запуск сервиса после загрузки шлема
-  src/…/MainActivity.java      окно: статус, «Передавать вручную» (отладка), «Авто» (включить), «Выключить» (запоминается)
+  src/…/MainActivity.java      окно: статус, трекеры PICO, «Передавать вручную» (отладка), «Авто», «Выключить», «Откалибровать»
+  src/…/L.java                 язык окна: русский, если язык системы русский, иначе английский
 driver/                        драйвер SteamVR «picotrackers» (C++17, Linux и Windows)
   build.sh / fetch_deps.sh     CMake+Ninja → build/picotrackers/; openvr_driver.h v2.15.6 (sha256)
   fetch_sysroot.py             sysroot Debian 11 (libc6, libc6-dev, linux-libc-dev, libgcc-s1, libgcc-10-dev,
                                libstdc++-10-dev; индекс archive.debian.org закреплён sha256) → third_party/sysroot-bullseye
   cmake/linux-sniper.cmake     тулчейн Linux-драйвера (clang + lld + этот sysroot); cmake/mingw-w64.cmake — Windows
-  package/                     driver.vrdrivermanifest (alwaysActivate), default.vrsettings, input profile
+  package/                     driver.vrdrivermanifest (alwaysActivate), default.vrsettings, input profile, resources/icons
+                               (иконки трекера для окна SteamVR; копируются в сборку каждый раз — цель driver_package)
+  icons/pico_tracker.svg       силуэт трекера PICO (нарисовал пользователь, 2026-10-13) → icons/make_icons.py
+                               (rsvg-convert + magick) → package/resources/icons: 8 состояний × 32/64 px (_2x — её ищет
+                               vrmonitor), «ищется» — GIF; цвета SteamVR (#44454A / #85B717), значки i / ! / молния.
+                               Готовые файлы в репозитории; перегенерировать только при смене рисунка
   src/driver.cpp               провайдер: 24 трекера, включение на лету, команды программы, JSON-состояние
   src/receiver.*               поток сети: снимки со шлема, hello/bye шлему, команды/состояние программы
   src/calibration.*            STAGE шлема → raw-пространство SteamVR
-  src/tracker_device.*         устройство SteamVR (свойства, иконки {htc}, модель {htc}vr_tracker_vive_1_0)
+  src/tracker_device.*         устройство SteamVR (свойства, свои иконки {picotrackers}/icons/pico_tracker_*, 3D-модель
+                               пока {htc}vr_tracker_vive_1_0)
 pc/                            программа на ПК (Go, модуль picotrackers; gotk4 v0.4.1 + gotk4-adwaita), Linux и Windows
   update.go                    обновление: последний релиз GitHub, сравнение версий, загрузка + SHA256SUMS, условия,
                                Release.Install (APK на шлем, затем installUpdate из platform_*.go); update_test.go
@@ -275,7 +364,8 @@ pc/                            программа на ПК (Go, модуль pi
                                build/windows/PICOtrackers/, build/PICOtrackers-windows.zip (~34 МБ) и установщик
                                build/PICOtrackers-setup-<версия>.exe. Значок/версия exe: windres → rsrc_windows_amd64.syso
                                (генерируется, gitignore), картинки установщика → build/windows-res
-  windows/installer.iss        сценарий Inno Setup (русский, WizardStyle modern dynamic windows11, AppMutex)
+  windows/installer.iss        сценарий Inno Setup (английский + русский по языку Windows, [CustomMessages],
+                               WizardStyle modern dynamic windows11, AppMutex)
   windows/fetch_innosetup.sh   Inno Setup 7.1.0 (sha256 из релиза GitHub) → ставится под Wine в third_party/innosetup
   icon.svg                     значок программы (вшит: окно/«О программе» через кэш + IconTheme.AddSearchPath,
                                значок в меню Linux; Windows: .ico в exe и картинки установщика)
@@ -287,6 +377,12 @@ pc/                            программа на ПК (Go, модуль pi
   platform_linux.go / platform_windows.go  пути, SteamVR (pgrep / PowerShell), автозапуск (.desktop / реестр Run),
                                скрытие консоли у дочерних процессов на Windows
   wizard.go                    мастер установки (Adw.Dialog + NavigationView); на Linux первый шаг «Программа»
+  i18n.go / i18n_en.go         язык: T("рус") / Tf / N (пометка без перевода на месте) → таблица translations;
+                               i18n_test.go находит все T/Tf/N в коде и проверяет перевод и %-спецификаторы
+  appimage/AppRun              запуск из AppImage: ld-linux из образа --library-path, переменные GTK (с запоминанием прежних)
+  appimage/build-appimage.sh   AppImage → build/PICOtrackers-x86_64.AppImage (runtime type2 20251108, sha256)
+  flatpak/dev.picotrackers.Control.yml, build-flatpak.sh   Flatpak (GNOME 51, готовый build/picotrackers) → build/PICOtrackers.flatpak
+  linux/                       .desktop и metainfo.xml (AppImage, Flatpak)
   install_test.go              тест установки драйвера во временном HOME
   main.go                      вход: окно; подкоманды setup / stop / install-driver / uninstall (последние две —
                                для установщика: --message-file=F, коды 0 / 1 ошибка / 3 мешает запущенный SteamVR);
@@ -304,15 +400,22 @@ tools/udp_listen.py            отладка (Python): показывает п�
   2 = трекеры готовы), joint_count u32, 24 × {pos[3], rot[4] xyzw, flags u32}`; позиции в STAGE шлема.
   Без флага 2 (трекеры PICO не подключены) шлем шлёт **пакет состояния**: тот же размер, `joint_count = 0`, суставы
   нулевые, 5 раз/с. Драйвер 1.3 такой пакет переживает (позы просто невалидны).
-- **PTC1** драйвер → шлем:7789, 12 байт: `magic, data_port u16, command u16 (1 hello, 2 bye), rate_hz u16,
-  reserved u16` (шлем читает rate, если длина ≥ 10; при смене частоты hello уходит сразу). Hello раз в 1 с
+- **PTS1** шлем → ПК:7788, 36 байт, раз в 1 с, пока идёт трекинг (приложение 1.7+; старые драйверы пропускают —
+  другая магия и размер): `body_status i8, body_error i8` (xrGetBodyTrackingStateBD, −1 неизвестно), `calibrated i8`
+  (libtrackingclient, −1), `tracker_count u8` (0xFF — неизвестно), `12 × {id u8, battery i8 %}`, `calibration_request u16,
+  calibration_result i16` (итог последней просьбы откалибровать: 0 открыл рантайм, 1 запущено приложение калибровки,
+  2 запущено, но без права «поверх окон» могло не открыться, < 0 ошибка, −32768 — просьб не было).
+- **PTC1** драйвер → шлем:7789, 12 байт: `magic, data_port u16, command u16 (1 hello, 2 bye, 3 calibrate), rate_hz u16,
+  request u16` (шлем читает rate, если длина ≥ 10; request — номер просьбы откалибровать, шлем выполняет каждую один
+  раз; драйвер шлёт её 3 раза через 200 мс; при смене частоты hello уходит сразу). Hello раз в 1 с
   на broadcast всех IPv4-интерфейсов + на известный IP шлема (`driver_picotrackers.headset_ip` в настройках
   SteamVR, драйвер запоминает адрес отправителя данных). Шлем шлёт данные на IP отправителя hello.
-- **PTA1** программа → драйвер (127.0.0.1:7788, текст): `PTA1 tracking=0|1 rate=N trackers=a,b,c|none`, раз в 1 с
-  и при изменениях. Нет команд 3 с → драйвер считает программу отключённой: трекинг включён, набор прежний.
+- **PTA1** программа → драйвер (127.0.0.1:7788, текст): `PTA1 tracking=0|1 rate=N trackers=a,b,c|none [calibrate=N]`,
+  раз в 1 с и при изменениях; `calibrate=N` — 3 с после нажатия «Откалибровать» (драйвер реагирует на новый N). Нет команд 3 с → драйвер считает программу отключённой: трекинг включён, набор прежний.
 - **JSON-состояние** драйвер → программа (127.0.0.1:7790) раз в 0.5 с: app, tracking, data, hmd, packets_per_s,
   headset_ip, body_tracked, trackers_ready, rate, calibration{valid, error, samples, yaw}, trackers[{name, role,
-  enabled, added, valid}]. Плюс `{"type":"poses","joints":[[x,y,z,valid]×24]}` ~30 раз/с (только пока
+  enabled, added, valid}], pico{status, error, calibrated, count, calibration_request, calibration_result,
+  trackers[{id, battery}]} — только пока PTS1 свежий (< 3 с). Плюс `{"type":"poses","joints":[[x,y,z,valid]×24]}` ~30 раз/с (только пока
   программа подключена и идут данные) — для 3D-вида; координаты STAGE шлема.
 
 ### Приложение на шлеме
@@ -339,6 +442,17 @@ tools/udp_listen.py            отладка (Python): показывает п�
 - logcat `PicoTrackers`: `stats sent=… tracked=… trackers=… session=… err=… target=…` (раз в 1 с) и
   `listener: waiting… / tracking -> ip:port (причина) / tracking stopped (причина)` — их разбирает программа.
 - BootReceiver после реальной перезагрузки шлема **не проверен** (shell не может послать BOOT_COMPLETED).
+- **Трекеры PICO (1.7)**: раз в 1 с, пока идёт трекинг, поток трекинга шлёт PTS1 (`pico::status_packet`: status/error
+  рантайма + подключение, заряд, калибровка из libtrackingclient.pxr.so). Опрос — поток `picotrackers-trackers` в
+  сервисе, раз в 5 с (`Native.pollPicoTrackers`), в т.ч. когда трекинга нет; первый вызов застрахован меткой
+  `pxr_probing` (упал — `pxr_crashed_version` = versionCode, опрос выключен до новой версии APK). Заряд в процентах —
+  `заряд × 100 / getSwiftTrackerMaxBattery`. «НЕ откалиброваны» в окне шлема — по `pico::not_calibrated()`.
+- **Команда «откалибровать»** (PTC1 3, в т.ч. в ручном режиме): `Native.startCalibration()` (рантайм:
+  `xrStartBodyTrackingCalibAppBD(instance, "", 1)`, иначе `…CalibrationAppPICO(instance)`; instance — под мьютексом,
+  `pico::set_runtime` в init/деструкторе BodyTracking) → не вышло — `launchCalibrationApp` (launcher `com.pvr.swift`,
+  `enter_flag` = Steam Link, если он стоит) → итог в PTS1 и лог `calibration: request N -> R (runtime X)`.
+- Язык окна, уведомления и строк состояния (`Native.setRussian`) — по Locale шлема (`L.java`); logcat — английский
+  (причины в `listener: tracking -> … (причина)` теперь тоже по-английски).
 
 ### Драйвер
 - Сборка: `driver/build.sh` — Linux (`build/cmake-sniper`, тулчейн `cmake/linux-sniper.cmake`: clang + lld +
@@ -375,6 +489,11 @@ tools/udp_listen.py            отладка (Python): показывает п�
   ld-2.31.so из `SteamLinuxRuntime_sniper/sniper_platform_*/files/lib/x86_64-linux-gnu` + `--library-path` с
   симлинками libc.so.6 и т.п. + маленький загрузчик на C (dlopen RTLD_NOW + HmdDriverFactory). Ошибки `[Input] … has no configured binding` безвредны. Пока HMD не подключён,
   SteamVR держит трекеры в «started activation»; `Activate()` — при подключении HMD.
+- **Трекеры PICO (1.7)**: `Receiver` принимает PTS1 (36 байт) отдельно от PTB1; `update_pico_status` — свежий (< 3 с)
+  PTS1 → `pico` в JSON программе и заряд всем трекерам SteamVR (`TrackerDevice::set_battery` → `Prop_DeviceProvidesBatteryStatus_Bool`,
+  `Prop_DeviceBatteryPercentage_Float` = самый низкий из трекеров PICO / 100, `Prop_DeviceIsCharging_Bool` false;
+  нет PTS1 — «заряд неизвестен»). `calibrate=N` из PTA1 (новый N) → `receiver_.request_calibration(N)` — PTC1 3 три
+  раза через 200 мс; ответ шлема — строка в логе «калибровка трекеров PICO на шлеме: открыта/не открылась».
 - Обновлённый `.so` подхватывается только перезапуском SteamVR (`pkill -TERM -x vrmonitor; pkill -TERM -x
   vrserver`, затем `steam steam://rungameid/250820`; Steam Link на шлеме нужно переподключить).
 
@@ -447,7 +566,7 @@ tools/udp_listen.py            отладка (Python): показывает п�
 - `installApp`: если `adb install -r` отвечает `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (на шлеме APK с другой подписью —
   локальная сборка против релиза из CI), приложение удаляется (`adb uninstall`) и ставится заново. На шлеме не проверено.
 - Конфиг: `adb_wifi`, `tracking`, `trackers` (если нет — берётся из первого состояния драйвера), `rate`, `wizard_done`,
-  `service_off` (сервис на шлеме выключен кнопкой).
+  `service_off` (сервис на шлеме выключен кнопкой), `language` ("" — как в системе, ru, en).
 - Окно — вкладки (Adw.ViewStack + ViewSwitcher в заголовке):
   - «Трекеры»: карточка общего состояния, «Шлем / SteamVR / Калибровка», «Передавать трекинг», «Частота
     передачи» (Adw.SpinRow), схема «человечек» (`body.go`: фигура со спины в центре, 10 трекеров с
@@ -456,16 +575,53 @@ tools/udp_listen.py            отладка (Python): показывает п�
   - «3D-вид» (`view3d.go`): скелет линиями, включённые трекеры точками с подписями, сетка пола; камера за
     спиной и следует за поворотом (направление по линии бёдер), перетаскивание — облёт, колесо — масштаб;
     перерисовка ~30 раз/с только когда вкладка открыта;
-  - «Настройки»: автозапуск при входе (`~/.config/autostart/picotrackers.desktop`), переустановка, журнал.
+  - «Настройки»: язык, автозапуск при входе (`~/.config/autostart/picotrackers.desktop`), переустановка, журнал.
   Пункт меню приложений — `~/.local/share/applications/dev.picotrackers.Control.desktop`.
 - Переключатели трекеров — общий интерфейс `trackerControl` (схема и строки списка); `updating` гасит
   обратные вызовы, когда переключатели меняет программа.
 - Единственный экземпляр — через D-Bus (`dev.picotrackers.Control`) и занятый UDP 7790.
+- **`--dev`** (2026-10-13, просьба пользователя: своя сборка для проверки не должна ничего делать «в пуск»):
+  `devMode` — `selfInstall=false` (нет шага «Программа»: себя в ~/.local/bin не копирует, пункт меню не создаёт), нет
+  переключателя автозапуска (вместо него строка «Своя сборка (--dev)»), обновления не проверяются, `uninstall()` не
+  трогает автозапуск и установленную программу с пунктом меню (только драйвер и данные), заголовок «PICO Trackers
+  (dev)». Драйвер и APK мастер ставит как обычно, папки данных и конфига общие с установленной версией.
+  Перезапуск при смене языка сохраняет флаг (`devArgs()`). Тест — `TestUninstallDevKeepsProgram`.
+- **Язык (1.7)**: `setupLanguage()` первым делом в main — `config.language` ("" / ru / en), иначе язык системы
+  (Linux: LANGUAGE, LC_ALL, LC_MESSAGES, LANG; Windows: GetUserDefaultUILanguage, 0x19 — русский); не русский →
+  английский. Тексты в коде по-русски: `T("…")`, `Tf(формат, …)`, `N("…")` — пометка для текста, который
+  переводится позже (названия суставов, константы до выбора языка); перевод — `i18n_en.go`. Ошибки, создаваемые
+  до выбора языка, — типом с `Error() { return T(…) }` (errSteamVRRunning). Настройки → «Язык · Language»
+  (AdwComboRow) → тост «Перезапустить» → `restartProgram`: Linux — `syscall.Exec` самого себя (тот же PID — годится
+  и для Flatpak; сокеты CLOEXEC, D-Bus-имя освобождается), Windows — новый процесс `--wait-pid` и выход.
+- **Трекеры PICO (1.7)**: строка «Трекеры PICO» (`refreshPico`): подключены/откалиброваны/код ошибки, «подключено: N»,
+  заряд (< 20 % — предупреждение «зарядите трекеры»); `PicoStatus.NotCalibrated()` = status 0 и error 1 (или
+  calibrated 0 при count > 0), count ≠ 0. Кнопка «Откалибровать» там и в карточке — `Controller.CalibrateTrackers`:
+  если драйвер на связи — `calibrate=N` в PTA1 на 3 с и ждёт ответа в `pico.calibration_*` (0/1 — тост «Калибровка
+  открыта на шлеме — наденьте его»); 2, ошибка или нет ответа — `launchCalibrationApp` по adb. При подключении к
+  шлему и после установки APK — `allowBackgroundCalibration` (appops SYSTEM_ALERT_WINDOW).
+- **AppImage / Flatpak** (`packaging` в platform_linux.go по `APPIMAGE`+`APPDIR` / `FLATPAK_ID`):
+  - `selfExecutable()` — у AppImage `$APPIMAGE` (а не программа внутри: `/proc/self/exe` там — ld-linux). Мастер,
+    меню, автозапуск, обновление, перезапуск работают с ним: копия в `~/.local/bin/picotrackers` — сам AppImage.
+  - AppRun задаёт XDG_DATA_DIRS, GSETTINGS_SCHEMA_DIR, GSETTINGS_BACKEND=memory, GIO_MODULE_DIR (пустая), XKB_CONFIG_ROOT
+    (раскладки из образа — без них GTK на Wayland падал в Debian), GSK_RENDERER=cairo и GDK_DISABLE=gl,vulkan,dmabuf
+    (драйверы видеокарты системы не к нашим библиотекам), GODEBUG=netdns=go; прежние значения → PICOTRACKERS_HOST_*.
+    В startup окна `initGTKFromEnv` (gdk-pixbuf, схемы, GIO, data dirs читают env сейчас) → `restoreHostEnv`;
+    у консольных команд — сразу. Дочерние процессы (adb, steam, браузер) получают окружение системы (проверено).
+  - Тема значков системы без нужных значков (в контейнере не было breeze) → `gtk-icon-theme-name = Adwaita`.
+  - Flatpak: данные и конфиг — `XDG_DATA_HOME`/`XDG_CONFIG_HOME` песочницы (`~/.var/app/<id>/…`; без Flatpak — как
+    раньше, `~/.local/share`, даже если XDG_* заданы); `hostCommand`/`runHost` → `flatpak-spawn --host` для pgrep/ps
+    (SteamVR), vrpathreg, `xdg-open steam://…`; `isOurDriver` — по имени папки, если манифест не прочитать (чужая
+    регистрация picotrackers не видна из песочницы); `selfInstall=false` (нет шага «Программа»), но «Удалить
+    программу» есть (`canUninstall`: драйвер + данные); автозапуск — `Exec=flatpak run dev.picotrackers.Control`;
+    `canSelfUpdate` — ошибка «скачайте .flatpak», окно обновления ведёт на страницу релиза.
+  - Обновление: `isProgramAsset` — `PICOtrackers-x86_64.AppImage` / `PICOtrackers.flatpak` / `picotrackers-linux-x86_64`
+    по `packaging`; AppImage подменяет себя (`$APPIMAGE` и копию в ~/.local/bin), дальше как у файла.
 - `slog.SetLogLoggerLevel(Warn)` — иначе GTK засыпает stderr сообщениями Vulkan. Предупреждение
   «gtk-application-prefer-dark-theme with libadwaita is unsupported» — от настроек KDE, безвредно.
 
 ### Проверка
 ```sh
+pc/build/picotrackers --dev                      # своя сборка: в меню/автозапуск/~/.local/bin не встраивается
 pc/build/picotrackers setup                      # сборка, регистрация, установка, сервис на шлеме
 adb -s 192.168.0.11:5555 logcat -s PicoTrackers  # listener: … / stats …
 grep picotrackers ~/.local/share/Steam/logs/vrserver.txt
@@ -484,10 +640,14 @@ python3 -c "import socket,struct;s=socket.socket(2,2);s.setsockopt(1,6,1);s.send
 - `linux` / `windows` (Arch, после driver+headset): артефакты → `pc/assets`, `PREBUILT_ASSETS=1`; кэш
   `~/.cache/go-build` + `~/go/pkg/mod` с ключом `go-<os>-<GOVERSION>-<hash go.sum>`. `git config safe.directory` обязателен:
   рабочая папка принадлежит другому uid, без него `go build` падает на «error obtaining VCS status».
-  linux: + `go test ./...`, печать требуемой glibc (2.34 на 2026-10) → артефакт `picotrackers-linux`.
+  linux: + `go test ./...`, печать требуемой glibc (2.34 на 2026-10), `pc/appimage/build-appimage.sh` (+ pacman
+  squashfs-tools librsvg; проверено в чистом archlinux:base-devel) → артефакт `picotrackers-linux` (файл + AppImage).
+- `flatpak` (после linux): контейнер `ghcr.io/flathub-infra/flatpak-github-actions:gnome-51` с `options: --privileged`
+  (иначе bubblewrap не работает), артефакт linux → `pc/build`, `pc/flatpak/build-flatpak.sh` → `picotrackers-flatpak`.
   windows: + wine xorg-server-xvfb librsvg imagemagick zip python, `xvfb-run -a pc/build-windows.sh` → артефакт
   `picotrackers-windows` (setup.exe + zip).
-- `release` (только тег): `gh release create` — `picotrackers-linux-x86_64`, setup.exe, zip, APK, `SHA256SUMS.txt`.
+- `release` (только тег): `gh release create` — `picotrackers-linux-x86_64`, `PICOtrackers-x86_64.AppImage`,
+  `PICOtrackers.flatpak`, setup.exe, zip, APK, `SHA256SUMS.txt` (имена программ — `isProgramAsset` в platform_*.go).
 - Локальная проверка: git-клон (только отслеживаемые файлы) + те же команды в `docker run archlinux:base-devel`
   (`--cpus=4`, рабочая папка с чужим uid) и в `ubuntu:24.04` + Temurin 25 для APK. Так найдено: на свежем клоне нет
   `pc/build`, Wine не создаёт родителя `WINEPREFIX` → `wineprefix.sh` теперь делает `mkdir -p` и падает с понятной
@@ -497,11 +657,17 @@ python3 -c "import socket,struct;s=socket.socket(2,2);s.setsockopt(1,6,1);s.send
 - Дождаться отзыва: живое переключение трекеров, 3D-вид после исправления зеркальности, VRChat, задержка.
 - Предсказание: скорости по разности поз + `poseTimeOffset`.
 - Конфликт: в SteamVR зарегистрирован «Standable: Full Body Estimation» (свои виртуальные трекеры) и ALVR nightly.
-- Если трекеры не откалиброваны (`status=0`) — `xrStartBodyTrackingCalibAppBD`.
+- **Проверить 1.7 на шлеме со SteamVR**: заряд и «не откалиброваны» в программе и SteamVR (шлем уже отдаёт —
+  `pxr: result=0 trackers=2 …`), `calibration: request …` (открывает ли рантайм калибровку из фоновой IDLE-сессии,
+  работает ли запуск com.pvr.swift после appops); `runtime tracker functions: …`. Вариант калибровки —
+  `startSwiftCalibration` из libtrackingclient (сигнатура не разобрана).
+- Steam как Flatpak (com.valvesoftware.Steam) + наш Flatpak: увидит ли SteamVR драйвер в ~/.var/app — не проверялось.
 - Проверить BootReceiver после перезагрузки шлема (может мешать автозапуск-политика PICO OS).
 
 ## Соглашения
-- Комментарии в коде, UI и лог драйвера — на русском; logcat приложения — на английском.
+- Комментарии в коде, UI и лог драйвера — на русском; logcat приложения — на английском. Тексты интерфейса программы
+  в коде — по-русски через `T()/Tf()/N()`, английский — в `pc/i18n_en.go` (i18n_test.go не пропустит текст без
+  перевода); установщик — [CustomMessages] en/ru; приложение на шлеме — `L.t(ru, en)`.
 - C++17; Java без внешних библиотек (UI кодом); Go — gofmt. IDE показывает ложные ошибки в Java (нет android.jar
   в её classpath) — собирать через build.sh.
 - Сторонние зависимости не коммитить — только через fetch_deps.sh / go.sum с закреплёнными версиями.

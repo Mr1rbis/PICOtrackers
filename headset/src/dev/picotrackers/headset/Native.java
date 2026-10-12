@@ -21,5 +21,20 @@ final class Native {
 
     static native String status();
 
+    /** Язык строк состояния (status, picoTrackers). */
+    static native void setRussian(boolean russian);
+
+    /** Опросить трекеры PICO (libtrackingclient.pxr.so): false — библиотека недоступна. */
+    static native boolean pollPicoTrackers();
+
+    /** Трекеры PICO одной строкой: сколько подключено, заряд, калибровка. */
+    static native String picoTrackers();
+
+    /** Открыть калибровку трекеров через рантайм OpenXR: XrResult, < 0 — не получилось. */
+    static native int startCalibration();
+
+    /** Итог просьбы программы на ПК откалибровать трекеры — уходит ей в пакете состояния. */
+    static native void setCalibrationResult(int request, int result);
+
     private Native() {}
 }

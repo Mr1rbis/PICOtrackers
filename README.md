@@ -38,6 +38,8 @@ PICO Motion Trackers на ногах → трекеры в SteamVR, когда �
 |---|---|
 | Linux (Arch / CachyOS), PICO 4 Pro, Steam Link 2.0.22, SteamVR 2.17 | ✅ работает у автора |
 | Windows 10/11 | 🟡 собирается, установщик и программа запускаются под Wine; на настоящей Windows ещё не проверялось — ближайшие тесты будут на Windows |
+| Linux: AppImage, Flatpak | 🟡 окно, установка драйвера и самообновление AppImage проверены в контейнерах Ubuntu 24.04, Debian 13, Fedora 43 и в образе GNOME 51 (Flatpak); со SteamVR и шлемом — ещё нет |
+| Калибровка трекеров и их заряд (1.7) | 🟡 сделано по PICO SDK и проверено на поддельном шлеме; на настоящем PICO 4 Pro ещё нет |
 | PICO 4 (не Pro), PICO 4 Ultra | ❔ не проверялось |
 
 ### Что нужно
@@ -51,11 +53,14 @@ PICO Motion Trackers на ногах → трекеры в SteamVR, когда �
   включить отладку по USB и разрешить её на шлеме, когда он спросит. adb ставить не обязательно: если его нет,
   программа скачает его сама.
 
-**Linux**
-- Дистрибутив уровня GNOME 50: **GTK ≥ 4.22 и libadwaita ≥ 1.9** — Arch и производные, Fedora 44+,
-  Ubuntu 26.04+, openSUSE Tumbleweed. На более старых (Ubuntu 24.04, Mint 22, Debian 13, SteamOS) программа
-  не запустится. Сам драйвер SteamVR собран под Steam Runtime и от дистрибутива не зависит, но ставит его программа.
-- Пакеты (на десктопе с GNOME обычно уже стоят):
+**Linux** — программа есть в трёх видах, подойдёт любой:
+- **AppImage** (`PICOtrackers-x86_64.AppImage`) — на любом дистрибутиве x86_64, в том числе Ubuntu 24.04, Mint,
+  Debian 13, SteamOS: GTK, libadwaita и всё нужное — внутри. Нужен FUSE (почти везде уже есть); без него —
+  `./PICOtrackers-x86_64.AppImage --appimage-extract-and-run`.
+- **Flatpak** (`PICOtrackers.flatpak`) — на любом дистрибутиве с Flatpak; runtime GNOME 51 скачается с Flathub.
+- **Обычный файл** (`picotrackers-linux-x86_64`) — для дистрибутивов уровня GNOME 50: **GTK ≥ 4.22 и
+  libadwaita ≥ 1.9** — Arch и производные, Fedora 44+, Ubuntu 26.04+, openSUSE Tumbleweed. Пакеты (на десктопе
+  с GNOME обычно уже стоят):
 
   | Дистрибутив | Команда |
   |---|---|
@@ -64,6 +69,7 @@ PICO Motion Trackers на ногах → трекеры в SteamVR, когда �
   | Ubuntu 26.04+ | `sudo apt install libgtk-4-1 libadwaita-1-0 libgirepository-1.0-1` |
   | openSUSE Tumbleweed | `sudo zypper install libgtk-4-1 libadwaita-1-0 libgirepository-1_0-1` |
 
+Сам драйвер SteamVR собран под Steam Runtime и от дистрибутива не зависит, но ставит его программа.
 - Если adb пишет `no permissions` — нужны udev-правила для Android-устройств: на Arch пакет `android-udev`,
   на Ubuntu/Debian — `android-sdk-platform-tools-common`.
 - Если включён брандмауэр — открыть входящий **UDP 7788**: `sudo ufw allow 7788/udp` или
@@ -82,11 +88,11 @@ PICO Motion Trackers на ногах → трекеры в SteamVR, когда �
 
 Готовые файлы — на странице [Releases](../../releases/latest).
 
-**Linux.** Скачать `picotrackers-linux-x86_64` и запустить:
+**Linux, AppImage или обычный файл.** Скачать `PICOtrackers-x86_64.AppImage` (или `picotrackers-linux-x86_64`) и запустить:
 
 ```sh
-chmod +x picotrackers-linux-x86_64
-./picotrackers-linux-x86_64
+chmod +x PICOtrackers-x86_64.AppImage
+./PICOtrackers-x86_64.AppImage
 ```
 
 Программа сама себе установщик: откроется мастер с кнопками «Далее».
@@ -95,6 +101,20 @@ chmod +x picotrackers-linux-x86_64
 3. Приложение на шлем — по USB-кабелю, затем adb переключается на Wi-Fi, и кабель можно отключить.
 
 После этого скачанный файл можно удалить. Права администратора не нужны.
+
+**Linux, Flatpak.** Подключить Flathub (если ещё нет) и поставить файл:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user PICOtrackers.flatpak
+flatpak run dev.picotrackers.Control      # или из меню приложений
+```
+
+Мастер поставит драйвер SteamVR (в `~/.var/app/dev.picotrackers.Control`) и приложение на шлем. Песочнице открыто
+только нужное: USB (adb), сеть, `~/.config/openvr` (регистрация драйвера), `~/.config/autostart`, `~/.android`
+(ключ adb — шлем уже доверяет компьютеру) и запуск команд системы через `flatpak-spawn --host` (запущен ли SteamVR,
+`vrpathreg`). adb программа скачает сама: системного adb из песочницы не видно. Если и Steam стоит как Flatpak,
+драйвер он может не увидеть — так не проверялось.
 
 **Windows.** Запустить `PICOtrackers-setup-<версия>.exe`. Права администратора не нужны: программа ставится
 для текущего пользователя. Галочки: драйвер SteamVR (SteamVR перед этим лучше закрыть), значок на рабочем
@@ -118,7 +138,16 @@ chmod +x picotrackers-linux-x86_64
   (10–250 раз/с); схема-человечек с переключателями трекеров; наборы «Ноги / Основные / Все» и ещё
   14 дополнительных суставов. Изменения сразу видны в SteamVR: выключенный трекер отключается и пропадает из игр.
 - **3D-вид** — скелет в реальном времени: мышью — облёт, колесом — масштаб.
-- **Настройки** — автозапуск при входе в систему, мастер установки, удаление, журнал.
+- **Настройки** — язык, автозапуск при входе в систему, мастер установки, удаление, журнал.
+
+**Трекеры PICO** (строка в окне): подключены ли, откалиброваны ли и заряд каждого (ниже 20 % — предупреждение).
+Если трекеры подключены, но не откалиброваны, появляется кнопка **«Откалибровать»**: на шлеме откроется
+калибровка PICO — наденьте шлем и посмотрите на трекеры на ногах, после калибровки PICO вернёт вас в Steam Link.
+Если шлем не смог открыть калибровку сам, программа откроет её по adb. Заряд виден и в SteamVR: у каждого трекера
+SteamVR — самый низкий заряд из трекеров PICO. Для этого нужно приложение на шлеме 1.7+.
+
+**Язык.** Программа, мастер, установщик Windows и приложение на шлеме — на русском или английском, как язык
+системы. Сменить язык программы: Настройки → «Язык · Language» (программа перезапустится).
 
 Программу можно не держать открытой: драйвер запоминает её настройки (передавать ли трекинг, набор трекеров,
 частоту) и работает с ними и без неё, и после перезапуска SteamVR.
@@ -132,12 +161,15 @@ chmod +x picotrackers-linux-x86_64
 «Доступна версия …». Обновление скачивается и ставится, только когда **SteamVR закрыт** и **шлем подключён
 к компьютеру USB-кабелем** с разрешённой отладкой по USB: вместе с программой обновляются драйвер SteamVR и
 приложение на шлеме. Окно можно закрыть кнопкой «Позже» — при следующем запуске оно откроется снова (и есть
-строка «Обновление» в настройках). Linux: программа заменит свой файл и перезапустится. Windows: программа
-закроется, установщик обновит её в тихом режиме и запустит снова; переносная версия из zip сама не обновляется.
+строка «Обновление» в настройках). Linux: программа заменит свой файл (или свой AppImage) и перезапустится;
+Flatpak сам не обновляется — окно покажет страницу релиза, новую версию ставят так же: `flatpak install --user
+PICOtrackers.flatpak`. Windows: программа закроется, установщик обновит её в тихом режиме и запустит снова;
+переносная версия из zip сама не обновляется.
 Файлы сверяются с `SHA256SUMS.txt` релиза. Обновляться так умеет версия 1.4 и новее — с 1.3 обновитесь вручную.
 
-**Удаление.** Linux: Настройки → «Удалить программу» (или `picotrackers uninstall`). Windows: «Параметры →
-Приложения» — деинсталлятор снимает драйвер с регистрации в SteamVR и удаляет данные программы.
+**Удаление.** Linux: Настройки → «Удалить программу» (или `picotrackers uninstall`); во Flatpak эта кнопка снимает
+драйвер и удаляет настройки, а саму программу — `flatpak uninstall --delete-data dev.picotrackers.Control`.
+Windows: «Параметры → Приложения» — деинсталлятор снимает драйвер с регистрации в SteamVR и удаляет данные программы.
 
 Команды: `picotrackers setup` (установка без мастера), `picotrackers stop` (выключить сервис на шлеме, как кнопкой — запоминается),
 `picotrackers install-driver` / `picotrackers uninstall` (их вызывает установщик Windows).
@@ -157,17 +189,22 @@ chmod +x picotrackers-linux-x86_64
 Всё собирается на Linux, Windows-версия — кросс-сборкой.
 
 ```sh
-pc/build.sh            # драйвер (Linux + Windows) + APK → вшиваются в программу → pc/build/picotrackers
-pc/build-windows.sh    # то же для Windows → pc/build/PICOtrackers-setup-<версия>.exe и PICOtrackers-windows.zip
+pc/build.sh                      # драйвер (Linux + Windows) + APK → вшиваются в программу → pc/build/picotrackers
+pc/appimage/build-appimage.sh    # после build.sh → pc/build/PICOtrackers-x86_64.AppImage
+pc/flatpak/build-flatpak.sh      # после build.sh → pc/build/PICOtrackers.flatpak (--docker — без своего flatpak-builder)
+pc/build-windows.sh              # то же для Windows → pc/build/PICOtrackers-setup-<версия>.exe и PICOtrackers-windows.zip
 ```
 
 Пакеты (Arch — на нём собирает и автор, и CI):
 
 ```sh
 sudo pacman -S --needed base-devel git go gtk4 libadwaita gobject-introspection \
-    clang lld cmake ninja python jdk-openjdk zip unzip \
-    mingw-w64-gcc wine xorg-server-xvfb librsvg imagemagick   # последняя строка — только для Windows-версии
+    clang lld cmake ninja python jdk-openjdk zip unzip squashfs-tools librsvg
+sudo pacman -S --needed mingw-w64-gcc wine xorg-server-xvfb imagemagick   # только для Windows-версии
 ```
+
+Flatpak собирается flatpak-builder'ом с runtime и SDK GNOME 51 (`--docker` — в образе
+`ghcr.io/flathub-infra/flatpak-github-actions:gnome-51`, как в CI).
 
 Плюс Android SDK в `/opt/android-sdk` (или `ANDROID_HOME`): `build-tools;37.0.0`, `platforms;android-37.0`,
 `ndk;29.0.14206865`. Для сборки под Windows нужен Python ≥ 3.14 (пакеты MSYS2 сжаты zstd).
@@ -176,11 +213,16 @@ sudo pacman -S --needed base-devel git go gtk4 libadwaita gobject-introspection 
 OpenVR, sysroot Debian 11 для драйвера, Go-модули, GTK для Windows из MSYS2, Inno Setup. Первая сборка долгая:
 биндинги GTK компилируются ~10 мин под Linux и ~15 мин под Windows.
 
+Свою сборку проверять с **`--dev`**: `pc/build/picotrackers --dev`. Всё работает как обычно (драйвер, шлем, мастер),
+но программа не встраивается в систему: не копирует себя в `~/.local/bin`, не создаёт пункт меню, не меняет автозапуск
+и не проверяет обновления (иначе предложила бы заменить сборку релизом). Установленная версия остаётся как была.
+В заголовке окна — «(dev)».
+
 `headset/debug.keystore` — ключ подписи APK, создаётся при первой сборке. Не удаляйте его, иначе обновление
 приложения на шлеме пойдёт через удаление и повторную установку.
 
 **CI** (`.github/workflows/build.yml`, GitHub Actions). На каждый push и pull request: драйвер, APK, программа
-для Linux (с тестами) и для Windows (установщик + zip); файлы — в артефактах запуска. Тег `vX.Y`, совпадающий
+для Linux (с тестами; файл, AppImage и Flatpak) и для Windows (установщик + zip); файлы — в артефактах запуска. Тег `vX.Y`, совпадающий
 с `appVersion` в `pc/core.go`, создаёт релиз со всеми файлами и `SHA256SUMS.txt`. Чтобы APK из CI был подписан
 тем же ключом, что и локальные сборки, добавьте секрет репозитория `HEADSET_KEYSTORE_BASE64`:
 
@@ -233,6 +275,8 @@ Video, the headset and the controllers still go through Steam Link as usual; thi
 |---|---|
 | Linux (Arch / CachyOS), PICO 4 Pro, Steam Link 2.0.22, SteamVR 2.17 | ✅ works for the author |
 | Windows 10/11 | 🟡 builds; the installer and the app start under Wine; not tried on real Windows yet, that's next |
+| Linux: AppImage, Flatpak | 🟡 the window, driver install and AppImage self-update were checked in Ubuntu 24.04, Debian 13 and Fedora 43 containers and in the GNOME 51 image (Flatpak); not yet with SteamVR and a headset |
+| Tracker calibration and battery (1.7) | 🟡 built from the PICO SDK and checked against a fake headset; not yet on a real PICO 4 Pro |
 | PICO 4 (non-Pro), PICO 4 Ultra | ❔ not tested |
 
 ### Requirements
@@ -246,12 +290,14 @@ Video, the headset and the controllers still go through Steam Link as usual; thi
   section, and allow it on the headset when asked. You don't need to install adb: if it's missing, the app
   downloads it.
 
-**Linux**
-- A GNOME 50-era distro: **GTK ≥ 4.22 and libadwaita ≥ 1.9**, e.g. Arch and derivatives, Fedora 44+,
-  Ubuntu 26.04+, openSUSE Tumbleweed. On older ones (Ubuntu 24.04, Mint 22, Debian 13, SteamOS) the app won't
-  start. The SteamVR driver itself is built for the Steam Runtime and works on any distro, but the app is what
-  installs it.
-- Packages (usually already there on a GNOME desktop):
+**Linux**: the app comes in three forms, any of them works:
+- **AppImage** (`PICOtrackers-x86_64.AppImage`): any x86_64 distro, including Ubuntu 24.04, Mint, Debian 13 and
+  SteamOS; GTK, libadwaita and everything else is inside. It needs FUSE (almost always there already); without it,
+  run `./PICOtrackers-x86_64.AppImage --appimage-extract-and-run`.
+- **Flatpak** (`PICOtrackers.flatpak`): any distro with Flatpak; the GNOME 51 runtime is downloaded from Flathub.
+- **Plain binary** (`picotrackers-linux-x86_64`): for GNOME 50-era distros with **GTK ≥ 4.22 and
+  libadwaita ≥ 1.9**, e.g. Arch and derivatives, Fedora 44+, Ubuntu 26.04+, openSUSE Tumbleweed. Packages
+  (usually already there on a GNOME desktop):
 
   | Distro | Command |
   |---|---|
@@ -260,6 +306,7 @@ Video, the headset and the controllers still go through Steam Link as usual; thi
   | Ubuntu 26.04+ | `sudo apt install libgtk-4-1 libadwaita-1-0 libgirepository-1.0-1` |
   | openSUSE Tumbleweed | `sudo zypper install libgtk-4-1 libadwaita-1-0 libgirepository-1_0-1` |
 
+The SteamVR driver itself is built for the Steam Runtime and works on any distro, but the app is what installs it.
 - If adb says `no permissions`, you need udev rules for Android devices: `android-udev` on Arch,
   `android-sdk-platform-tools-common` on Ubuntu/Debian.
 - If you run a firewall, open incoming **UDP 7788**: `sudo ufw allow 7788/udp` or
@@ -277,11 +324,11 @@ Video, the headset and the controllers still go through Steam Link as usual; thi
 
 Downloads are on the [Releases](../../releases/latest) page.
 
-**Linux.** Download `picotrackers-linux-x86_64` and run it:
+**Linux, AppImage or plain binary.** Download `PICOtrackers-x86_64.AppImage` (or `picotrackers-linux-x86_64`) and run it:
 
 ```sh
-chmod +x picotrackers-linux-x86_64
-./picotrackers-linux-x86_64
+chmod +x PICOtrackers-x86_64.AppImage
+./PICOtrackers-x86_64.AppImage
 ```
 
 The app is its own installer: a wizard with "Next" buttons opens.
@@ -291,12 +338,24 @@ The app is its own installer: a wizard with "Next" buttons opens.
 
 After that you can delete the downloaded file. No root needed.
 
+**Linux, Flatpak.** Add Flathub (if you haven't yet) and install the file:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user PICOtrackers.flatpak
+flatpak run dev.picotrackers.Control      # or from the app menu
+```
+
+The wizard installs the SteamVR driver (into `~/.var/app/dev.picotrackers.Control`) and the headset app. The
+sandbox only gets what the app needs: USB (adb), network, `~/.config/openvr` (driver registration),
+`~/.config/autostart`, `~/.android` (the adb key the headset already trusts) and running host commands via
+`flatpak-spawn --host` (is SteamVR running, `vrpathreg`). The app downloads adb itself: the system adb isn't visible
+from the sandbox. If Steam is a Flatpak too, it may not see the driver; that hasn't been tested.
+
 **Windows.** Run `PICOtrackers-setup-<version>.exe`. No admin rights needed: it installs for the current user.
 Checkboxes: SteamVR driver (better close SteamVR first), desktop icon, start with Windows. On first launch the
 app helps you install the headset app; plug the headset in with a cable. There's also a portable version,
 `PICOtrackers-windows.zip` (unzip, run `picotrackers.exe`).
-
-> The app's interface is in Russian for now.
 
 ### Usage
 
@@ -315,7 +374,17 @@ The app window:
   a body diagram with tracker toggles; "Legs / Main / All" presets and 14 extra joints. Changes show up in
   SteamVR right away: a disabled tracker is disconnected and disappears from games.
 - **3D view**: live skeleton; drag to orbit, scroll to zoom.
-- **Settings**: start on login, setup wizard, uninstall, event log.
+- **Settings**: language, start on login, setup wizard, uninstall, event log.
+
+**PICO trackers** (a row in the window): whether they're connected and calibrated, and the battery of each one
+(a warning below 20%). If the trackers are connected but not calibrated, a **"Calibrate"** button appears: PICO's
+calibration opens on the headset; put it on and look at the trackers on your legs, and after calibration PICO
+takes you back to Steam Link. If the headset can't open the calibration by itself, the app opens it over adb. The
+battery shows in SteamVR too: every SteamVR tracker gets the lowest battery of the PICO trackers. This needs the
+headset app 1.7+.
+
+**Language.** The app, the wizard, the Windows installer and the headset app are in English or Russian, following
+the system language. To switch the app's language: Settings → "Language · Язык" (the app restarts).
 
 You don't have to keep the app open: the driver remembers its settings (whether to send tracking, the tracker
 selection, the rate) and keeps using them without the app and after a SteamVR restart.
@@ -329,13 +398,16 @@ again until you turn it back on, with the app button or "Auto" in the headset ap
 available" window opens. The update is only downloaded and installed when **SteamVR is closed** and **the
 headset is connected to the PC with a USB cable** with USB debugging allowed: the SteamVR driver and the headset
 app are updated together with the program. You can close the window with "Later", but it will open again on the
-next start (there's also an "Update" row in Settings). Linux: the app replaces its own file and restarts.
-Windows: the app closes, the installer updates it silently and starts it again; the portable zip version doesn't
-update itself. Files are checked against the release's `SHA256SUMS.txt`. Versions 1.4 and later can update
+next start (there's also an "Update" row in Settings). Linux: the app replaces its own file (or its AppImage) and
+restarts; the Flatpak doesn't update itself: the window points to the release page, and you install the new version
+the same way, `flatpak install --user PICOtrackers.flatpak`. Windows: the app closes, the installer updates it
+silently and starts it again; the portable zip version doesn't update itself. Files are checked against the release's `SHA256SUMS.txt`. Versions 1.4 and later can update
 this way; update from 1.3 by hand.
 
-**Uninstall.** Linux: Settings → "Remove program" (or `picotrackers uninstall`). Windows: Settings → Apps; the
-uninstaller unregisters the driver from SteamVR and removes the app's data.
+**Uninstall.** Linux: Settings → "Uninstall the program" (or `picotrackers uninstall`); in the Flatpak this button
+unregisters the driver and removes the settings, and the app itself goes with
+`flatpak uninstall --delete-data dev.picotrackers.Control`. Windows: Settings → Apps; the uninstaller unregisters
+the driver from SteamVR and removes the app's data.
 
 Commands: `picotrackers setup` (install without the wizard), `picotrackers stop` (stop the service on the
 headset, like the button: it stays off), `picotrackers install-driver` / `picotrackers uninstall` (used by the Windows installer).
@@ -345,7 +417,7 @@ headset, like the button: it stays off), `picotrackers install-driver` / `picotr
 - Event log: at the bottom of the app window.
 - Driver log: `~/.local/share/Steam/logs/vrserver.txt` (Windows: `Steam\logs\vrserver.txt`), lines starting with `picotrackers:`.
 - Headset log: `adb logcat -s PicoTrackers`.
-- "Service on the headset is off": click "Enable service" (or menu → "Enable service on the headset").
+- "The headset service is off": click "Turn on service" (or menu → "Turn on the headset service").
 - The headset never starts sending: your network may be dropping broadcasts (Wi-Fi client isolation). Put the
   headset's IP into the SteamVR settings: `steamvr.vrsettings`, section `driver_picotrackers`, key `headset_ip`.
 - `tools/udp_listen.py` prints the joints coming from the headset (with SteamVR closed, since it's the same port).
@@ -355,17 +427,22 @@ headset, like the button: it stays off), `picotrackers install-driver` / `picotr
 Everything builds on Linux; the Windows version is cross-compiled.
 
 ```sh
-pc/build.sh            # driver (Linux + Windows) + APK → embedded into the app → pc/build/picotrackers
-pc/build-windows.sh    # same for Windows → pc/build/PICOtrackers-setup-<version>.exe and PICOtrackers-windows.zip
+pc/build.sh                      # driver (Linux + Windows) + APK → embedded into the app → pc/build/picotrackers
+pc/appimage/build-appimage.sh    # after build.sh → pc/build/PICOtrackers-x86_64.AppImage
+pc/flatpak/build-flatpak.sh      # after build.sh → pc/build/PICOtrackers.flatpak (--docker if you have no flatpak-builder)
+pc/build-windows.sh              # same for Windows → pc/build/PICOtrackers-setup-<version>.exe and PICOtrackers-windows.zip
 ```
 
 Packages (Arch, which both the author and CI use):
 
 ```sh
 sudo pacman -S --needed base-devel git go gtk4 libadwaita gobject-introspection \
-    clang lld cmake ninja python jdk-openjdk zip unzip \
-    mingw-w64-gcc wine xorg-server-xvfb librsvg imagemagick   # last line: Windows build only
+    clang lld cmake ninja python jdk-openjdk zip unzip squashfs-tools librsvg
+sudo pacman -S --needed mingw-w64-gcc wine xorg-server-xvfb imagemagick   # Windows build only
 ```
+
+The Flatpak is built by flatpak-builder with the GNOME 51 runtime and SDK (`--docker` uses the
+`ghcr.io/flathub-infra/flatpak-github-actions:gnome-51` image, like CI).
 
 Plus the Android SDK in `/opt/android-sdk` (or `ANDROID_HOME`): `build-tools;37.0.0`, `platforms;android-37.0`,
 `ndk;29.0.14206865`. The Windows build needs Python ≥ 3.14 (MSYS2 packages are zstd-compressed).
@@ -375,12 +452,17 @@ loader, OpenXR and OpenVR headers, a Debian 11 sysroot for the driver, Go module
 Inno Setup. The first build is slow: the GTK bindings take about 10 minutes to compile for Linux and about 15 for
 Windows.
 
+Test your own build with **`--dev`**: `pc/build/picotrackers --dev`. Everything works as usual (driver, headset,
+wizard), but the app doesn't integrate into the system: it doesn't copy itself to `~/.local/bin`, doesn't add a menu
+entry, doesn't change autostart and doesn't check for updates (otherwise it would offer to replace your build with a
+release). The installed version stays as it was. The window title says "(dev)".
+
 `headset/debug.keystore` is the APK signing key, created on the first build. Keep it, or updating the headset app
 will mean uninstalling and reinstalling it.
 
 **CI** (`.github/workflows/build.yml`, GitHub Actions). On every push and pull request it builds the driver, the
-APK, the Linux app (and runs its tests) and the Windows app (installer + zip); the files are attached to the run as
-artifacts. A `vX.Y` tag that matches `appVersion` in `pc/core.go` creates a release with all files and
+APK, the Linux app (runs its tests; plain binary, AppImage and Flatpak) and the Windows app (installer + zip); the
+files are attached to the run as artifacts. A `vX.Y` tag that matches `appVersion` in `pc/core.go` creates a release with all files and
 `SHA256SUMS.txt`. To have CI sign the APK with the same key as your local builds, add the repository secret
 `HEADSET_KEYSTORE_BASE64`:
 

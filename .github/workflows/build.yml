@@ -1,7 +1,8 @@
 # Полная сборка проекта:
 #   driver  — драйвер SteamVR под Linux (.so, glibc ≤ 2.31) и Windows (.dll);
 #   headset — приложение для шлема (APK);
-#   linux   — программа для Linux, в неё вшиты драйвер и APK; плюс тесты установки;
+#   linux   — программа для Linux, в неё вшиты драйвер и APK; плюс тесты; AppImage (со своими GTK и glibc);
+#   flatpak — та же программа во Flatpak (runtime GNOME 51);
 #   windows — программа для Windows с теми же драйвером и APK: установщик Inno Setup и переносной zip;
 #   release — на тег v<версия> (= appVersion в pc/core.go): релиз на GitHub со всеми файлами.
 #
@@ -106,7 +107,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Пакеты
-        run: pacman -Syu --noconfirm --needed git go gtk4 libadwaita gobject-introspection
+        # squashfs-tools и librsvg (rsvg-convert) — для AppImage.
+        run: pacman -Syu --noconfirm --needed git go gtk4 libadwaita gobject-introspection squashfs-tools librsvg
       - uses: actions/checkout@v7
       - &safe-directory
         name: Git в контейнере
@@ -140,10 +142,37 @@ jobs:
         run: go test ./...
       - name: Требования к glibc
         run: objdump -T pc/build/picotrackers | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+      - name: AppImage
+        run: pc/appimage/build-appimage.sh
       - uses: actions/upload-artifact@v7
         with:
           name: picotrackers-linux
-          path: pc/build/picotrackers
+          path: |
+            pc/build/picotrackers
+            pc/build/PICOtrackers-x86_64.AppImage
+          if-no-files-found: error
+
+  flatpak:
+    name: Программа для Linux (Flatpak)
+    needs: [linux]
+    runs-on: ubuntu-24.04
+    # В образе — flatpak-builder, runtime и SDK GNOME 51; bubblewrap внутри контейнера работает только с --privileged.
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+      options: --privileged
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: picotrackers-linux
+          path: pc/build
+      - name: Сборка
+        run: pc/flatpak/build-flatpak.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: picotrackers-flatpak
+          path: pc/build/PICOtrackers.flatpak
           if-no-files-found: error
 
   windows:
@@ -182,7 +211,7 @@ jobs:
   release:
     name: Релиз
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [headset, linux, windows]
+    needs: [headset, linux, flatpak, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -191,6 +220,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: picotrackers-linux
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: picotrackers-flatpak
           path: dist
       - uses: actions/download-artifact@v8
         with:

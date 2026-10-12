@@ -6,8 +6,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"html"
+	"runtime"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -17,7 +17,7 @@ import (
 // setUpdate — найдена версия новее: строка в настройках и окно обновления.
 func (w *window) setUpdate(r *Release) {
 	w.update = r
-	w.updateRow.SetSubtitle(fmt.Sprintf("Доступна версия %s, установлена %s", r.Version, appVersion))
+	w.updateRow.SetSubtitle(Tf("Доступна версия %s, установлена %s", r.Version, appVersion))
 	w.updateRow.SetVisible(true)
 	w.openUpdate()
 }
@@ -30,33 +30,33 @@ func (w *window) openUpdate() {
 	w.updateOpen = true
 
 	selfUpdateErr := canSelfUpdate()
-	what := "Обновятся программа, драйвер SteamVR и приложение на шлеме. Программа перезапустится."
+	what := T("Обновятся программа, драйвер SteamVR и приложение на шлеме. Программа перезапустится.")
 	switch {
 	case selfUpdateErr != nil:
 		what = ""
-	case !selfInstall:
-		what = "Обновятся программа, драйвер SteamVR и приложение на шлеме. Программа закроется, " +
-			"установщик обновит её и запустит снова."
+	case runtime.GOOS == "windows":
+		what = T("Обновятся программа, драйвер SteamVR и приложение на шлеме. Программа закроется, " +
+			"установщик обновит её и запустит снова.")
 	}
-	s := newWizardStep("Обновление", "software-update-available-symbolic", "Доступна версия "+r.Version,
-		fmt.Sprintf("Установлена %s. %s <a href=\"%s\">Что нового</a>", appVersion, what, html.EscapeString(r.PageURL)))
+	s := newWizardStep(T("Обновление"), "software-update-available-symbolic", Tf("Доступна версия %s", r.Version),
+		Tf("Установлена %s. %s <a href=\"%s\">Что нового</a>", appVersion, what, html.EscapeString(r.PageURL)))
 	nav := adw.NewNavigationView()
 	nav.Push(s.page)
 	dialog := adw.NewDialog()
-	dialog.SetTitle("Обновление")
+	dialog.SetTitle(T("Обновление"))
 	dialog.SetContentWidth(580)
 	dialog.SetContentHeight(680)
 	dialog.SetChild(nav)
 	closed := false
 	dialog.ConnectClosed(func() { closed, w.updateOpen = true, false })
 
-	s.secondry.SetLabel("Позже")
+	s.secondry.SetLabel(T("Позже"))
 	s.secondry.SetVisible(true)
 	s.secondry.ConnectClicked(func() { dialog.Close() })
 
 	if selfUpdateErr != nil {
 		s.showMessage(capitalize(selfUpdateErr.Error()), "dim-label")
-		s.next.SetLabel("Страница загрузки")
+		s.next.SetLabel(T("Страница загрузки"))
 		s.next.ConnectClicked(func() {
 			gtk.NewURILauncher(r.PageURL).Launch(context.Background(), &w.win.Window, nil)
 		})
@@ -64,9 +64,9 @@ func (w *window) openUpdate() {
 		return
 	}
 
-	steamVRRow, steamVRDot := s.row("SteamVR закрыт")
-	headsetRow, headsetDot := s.row("Шлем подключён USB-кабелем")
-	s.next.SetLabel("Обновить")
+	steamVRRow, steamVRDot := s.row(T("SteamVR закрыт"))
+	headsetRow, headsetDot := s.row(T("Шлем подключён USB-кабелем"))
+	s.next.SetLabel(T("Обновить"))
 	s.next.SetSensitive(false)
 
 	var conditions UpdateConditions
@@ -77,34 +77,34 @@ func (w *window) openUpdate() {
 		}
 		conditions = c
 		if c.SteamVRRunning {
-			steamVRRow.SetSubtitle("SteamVR запущен — закройте его: драйвер нельзя обновить, пока он загружен")
+			steamVRRow.SetSubtitle(T("SteamVR запущен — закройте его: драйвер нельзя обновить, пока он загружен"))
 			setDot(steamVRDot, "error")
 		} else {
-			steamVRRow.SetSubtitle("Закрыт")
+			steamVRRow.SetSubtitle(T("Закрыт"))
 			setDot(steamVRDot, "success")
 		}
 		switch {
 		case !c.AdbFound:
-			headsetRow.SetSubtitle("Не найден adb — нажмите «Скачать adb» (Android platform-tools от Google, ~10 МБ)")
+			headsetRow.SetSubtitle(T("Не найден adb — нажмите «Скачать adb» (Android platform-tools от Google, ~10 МБ)"))
 			setDot(headsetDot, "warning")
 		case c.Serial == "":
-			headsetRow.SetSubtitle("Не найден — подключите шлем кабелем и включите в нём «Отладку по USB»")
+			headsetRow.SetSubtitle(T("Не найден — подключите шлем кабелем и включите в нём «Отладку по USB»"))
 			setDot(headsetDot, "error")
 		case c.State == "unauthorized":
-			headsetRow.SetSubtitle("Наденьте шлем и разрешите отладку по USB для этого компьютера")
+			headsetRow.SetSubtitle(T("Наденьте шлем и разрешите отладку по USB для этого компьютера"))
 			setDot(headsetDot, "warning")
 		case c.State != "device":
-			headsetRow.SetSubtitle(fmt.Sprintf("Шлем %s: %s — переподключите кабель", c.Serial, c.State))
+			headsetRow.SetSubtitle(Tf("Шлем %s: %s — переподключите кабель", c.Serial, c.State))
 			setDot(headsetDot, "warning")
 		default:
-			headsetRow.SetSubtitle(fmt.Sprintf("Подключён (%s)", c.Serial))
+			headsetRow.SetSubtitle(Tf("Подключён (%s)", c.Serial))
 			setDot(headsetDot, "success")
 		}
 		if !c.AdbFound {
-			s.next.SetLabel("Скачать adb")
+			s.next.SetLabel(T("Скачать adb"))
 			s.next.SetSensitive(true)
 		} else {
-			s.next.SetLabel("Обновить")
+			s.next.SetLabel(T("Обновить"))
 			s.next.SetSensitive(c.Met())
 		}
 	}
@@ -141,7 +141,7 @@ func (w *window) openUpdate() {
 					busy = false
 					s.setBusy(false)
 					if err != nil {
-						s.showMessage("Не удалось скачать adb: "+err.Error(), "error")
+						s.showMessage(T("Не удалось скачать adb: ")+err.Error(), "error")
 					}
 					check()
 				})
@@ -169,10 +169,10 @@ func (w *window) openUpdate() {
 				s.setBusy(false)
 				dialog.SetCanClose(true)
 				if installed {
-					s.showMessage("Обновление установлено, но перезапустить программу не удалось — запустите её снова: "+
+					s.showMessage(T("Обновление установлено, но перезапустить программу не удалось — запустите её снова: ")+
 						err.Error(), "error")
 				} else {
-					s.showMessage("Не удалось обновить: "+err.Error(), "error")
+					s.showMessage(T("Не удалось обновить: ")+err.Error(), "error")
 				}
 				check()
 			})

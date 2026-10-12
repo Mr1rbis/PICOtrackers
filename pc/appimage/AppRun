@@ -1,0 +1,29 @@
+#!/bin/sh
+# Запуск PICO Trackers из AppImage. В образе — программа и все её библиотеки (GTK 4, libadwaita, glibc…) и
+# загрузчик ld-linux: программа идёт через него, поэтому ей не важно, какие GTK и glibc в системе.
+# Прежние значения переменных, которые здесь меняются, запоминаются в PICOTRACKERS_HOST_<имя> («1:значение»
+# или «0:» — не была задана): программа вернёт их, как только GTK прочитает свои (platform_linux.go,
+# restoreHostEnv), — adb, SteamVR и браузер запускаются с окружением системы.
+HERE=$(dirname "$(readlink -f "$0")")
+
+if [ "${XDG_DATA_DIRS+x}" ]; then export PICOTRACKERS_HOST_XDG_DATA_DIRS="1:$XDG_DATA_DIRS"; else export PICOTRACKERS_HOST_XDG_DATA_DIRS=0:; fi
+if [ "${GSETTINGS_SCHEMA_DIR+x}" ]; then export PICOTRACKERS_HOST_GSETTINGS_SCHEMA_DIR="1:$GSETTINGS_SCHEMA_DIR"; else export PICOTRACKERS_HOST_GSETTINGS_SCHEMA_DIR=0:; fi
+if [ "${GSETTINGS_BACKEND+x}" ]; then export PICOTRACKERS_HOST_GSETTINGS_BACKEND="1:$GSETTINGS_BACKEND"; else export PICOTRACKERS_HOST_GSETTINGS_BACKEND=0:; fi
+if [ "${GIO_MODULE_DIR+x}" ]; then export PICOTRACKERS_HOST_GIO_MODULE_DIR="1:$GIO_MODULE_DIR"; else export PICOTRACKERS_HOST_GIO_MODULE_DIR=0:; fi
+if [ "${XKB_CONFIG_ROOT+x}" ]; then export PICOTRACKERS_HOST_XKB_CONFIG_ROOT="1:$XKB_CONFIG_ROOT"; else export PICOTRACKERS_HOST_XKB_CONFIG_ROOT=0:; fi
+
+# Значки, схемы GSettings — из образа; модули GIO системы собраны под её GLib — не грузим ни одного.
+export XDG_DATA_DIRS="$HERE/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GSETTINGS_SCHEMA_DIR="$HERE/usr/share/glib-2.0/schemas"
+export GSETTINGS_BACKEND=memory
+export GIO_MODULE_DIR="$HERE/usr/lib/gio/modules"
+# Раскладки клавиатуры для libxkbcommon (на Wayland без них GTK падает): в других системах они лежат не там,
+# где их ищет libxkbcommon из Arch.
+export XKB_CONFIG_ROOT="$HERE/usr/share/xkeyboard-config-2"
+# Рисовать без OpenGL и Vulkan: драйверы видеокарты в системе собраны под её библиотеки, а не под эти.
+export GSK_RENDERER="${GSK_RENDERER:-cairo}"
+export GDK_DISABLE="${GDK_DISABLE:-gl,vulkan,dmabuf}"
+# DNS — средствами Go: модули NSS системы не подходят к glibc из образа.
+export GODEBUG="${GODEBUG:+$GODEBUG,}netdns=go"
+
+exec "$HERE/usr/lib/ld-linux-x86-64.so.2" --library-path "$HERE/usr/lib" "$HERE/usr/bin/picotrackers" "$@"

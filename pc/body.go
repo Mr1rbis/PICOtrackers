@@ -205,7 +205,7 @@ func (d *bodyDiagram) draw(area *gtk.DrawingArea, cr *cairo.Context, width, heig
 	setColor(cr, ink, 0.4)
 	cr.SelectFontFace("sans-serif", cairo.FontSlantNormal, cairo.FontWeightNormal)
 	cr.SetFontSize(11)
-	caption := "вид со спины"
+	caption := T("вид со спины")
 	extents := cr.TextExtents(caption)
 	cr.MoveTo(280-extents.Width/2, bodyHeight-6)
 	cr.ShowText(caption)
@@ -214,7 +214,7 @@ func (d *bodyDiagram) draw(area *gtk.DrawingArea, cr *cairo.Context, width, heig
 func trackerLabel(name string) string {
 	for _, t := range trackers {
 		if t.Name == name {
-			return t.Label
+			return T(t.Label)
 		}
 	}
 	return name

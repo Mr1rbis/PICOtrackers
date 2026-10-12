@@ -3,6 +3,8 @@
 // Настройки программы на ПК (трекинг вкл/выкл, набор трекеров, частота) драйвер хранит в настройках
 // SteamVR и работает с ними и без программы. Пока трекеры PICO не подключены к шлему, в SteamVR
 // ничего не передаётся: скелет без них PICO достраивает сам, и ноги были бы выдуманными.
+// Состояние трекеров PICO со шлема (откалиброваны ли, заряд) уходит программе, заряд — и в SteamVR;
+// просьбу программы «откалибровать трекеры» драйвер передаёт шлему.
 
 #include <openvr_driver.h>
 
@@ -36,6 +38,7 @@ constexpr int kDefaultRate = 100, kMinRate = 10, kMaxRate = 250;     // сним
 constexpr double kMaxHmdSpeed = 0.3;           // м/с — быстрее калибровочную пару не берём
 constexpr double kMaxHmdAngularSpeed = 1.0;    // рад/с
 constexpr auto kStatusLogInterval = std::chrono::seconds(10);
+constexpr auto kPicoStatusStale = std::chrono::seconds(3);  // шлем шлёт состояние трекеров раз в секунду
 
 struct TrackerSpec {
     const char *name;
@@ -180,8 +183,10 @@ public:
             }
         }
         if (poses_) feed_calibration(snapshot.packet, hmd, seconds(now));
+        update_pico_status(now);
 
         for (auto &tracker : trackers_) {
+            tracker->set_battery(battery_);
             if (poses_ && tracker->enabled && !tracker->added) add_device(*tracker);
             if (!tracker->added) continue;
             vr::DriverPose_t pose = make_pose(*tracker, snapshot.packet);
@@ -266,7 +271,52 @@ private:
             if (key == "tracking") set_tracking(value != "0");
             if (key == "trackers") set_enabled(value, true);
             if (key == "rate") set_rate(std::atoi(value.c_str()));
+            if (key == "calibrate") request_calibration(std::atoi(value.c_str()));
         }
+    }
+
+    // Просьба программы открыть на шлеме калибровку трекеров PICO; номер меняется при каждом нажатии кнопки.
+    void request_calibration(int request) {
+        if (request <= 0 || request > 0xffff || request == calibration_request_) return;
+        calibration_request_ = request;
+        receiver_.request_calibration(static_cast<uint16_t>(request));
+        log("программа просит открыть калибровку трекеров PICO на шлеме (%d)", request);
+    }
+
+    // Состояние трекеров PICO со шлема: заряд — всем трекерам SteamVR (самый низкий), остальное — программе.
+    void update_pico_status(Receiver::Clock::time_point now) {
+        Receiver::Status status;
+        pico_known_ = receiver_.latest_status(status) && now - status.received < kPicoStatusStale;
+        if (pico_known_) pico_ = status.packet;
+        int battery = -1;
+        if (pico_known_ && pico_.tracker_count != kTrackerCountUnknown) {
+            for (int i = 0; i < std::min<int>(pico_.tracker_count, kMaxPicoTrackers); i++)
+                if (pico_.trackers[i].battery >= 0 && (battery < 0 || pico_.trackers[i].battery < battery))
+                    battery = pico_.trackers[i].battery;
+        }
+        if (battery != battery_) {
+            if (battery >= 0) log("заряд трекеров PICO (самый низкий): %d %%", battery);
+            battery_ = battery;
+        }
+        std::string description = pico_known_ ? describe_pico() : "";
+        if (description != pico_description_) {
+            pico_description_ = description;
+            if (!description.empty()) log("трекеры PICO: %s", description.c_str());
+        }
+        if (pico_known_ && pico_.calibration_request == calibration_request_ &&
+            pico_.calibration_result != calibration_result_) {
+            calibration_result_ = pico_.calibration_result;
+            log("калибровка трекеров PICO на шлеме: %s (%d)",
+                calibration_result_ >= 0 ? "открыта" : "не открылась", calibration_result_);
+        }
+    }
+
+    std::string describe_pico() const {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "состояние %d, причина %d, откалиброваны %d, подключено %d", pico_.body_status,
+                      pico_.body_error, pico_.calibrated,
+                      pico_.tracker_count == kTrackerCountUnknown ? -1 : pico_.tracker_count);
+        return buf;
     }
 
     void set_tracking(bool tracking) {
@@ -315,6 +365,21 @@ private:
                       calibration_.valid() ? "true" : "false", calibration_.error(), calibration_.sample_count(),
                       calibration_.transform().rotation.yaw() * 180 / kPi);
         json += buf;
+        if (pico_known_) {
+            std::snprintf(buf, sizeof(buf),
+                          ",\"pico\":{\"status\":%d,\"error\":%d,\"calibrated\":%d,\"count\":%d"
+                          ",\"calibration_request\":%d,\"calibration_result\":%d,\"trackers\":[",
+                          pico_.body_status, pico_.body_error, pico_.calibrated,
+                          pico_.tracker_count == kTrackerCountUnknown ? -1 : pico_.tracker_count,
+                          pico_.calibration_request, pico_.calibration_result);
+            json += buf;
+            for (int i = 0; pico_.tracker_count != kTrackerCountUnknown && i < std::min<int>(pico_.tracker_count, kMaxPicoTrackers); i++) {
+                std::snprintf(buf, sizeof(buf), "%s{\"id\":%d,\"battery\":%d}", i ? "," : "", pico_.trackers[i].id,
+                              pico_.trackers[i].battery);
+                json += buf;
+            }
+            json += "]}";
+        }
         json += ",\"trackers\":[";
         for (size_t i = 0; i < trackers_.size(); i++) {
             const auto &t = *trackers_[i];
@@ -394,6 +459,12 @@ private:
     bool trackers_known_ = false;  // хоть один пакет уже был — состояние трекеров известно
     uint32_t packet_flags_ = 0;    // флаги последнего свежего пакета (Packet::flags)
     bool hmd_connected_ = false;
+    bool pico_known_ = false;  // свежее состояние трекеров PICO со шлема (приложение 1.7+)
+    StatusPacket pico_{};
+    std::string pico_description_;
+    int battery_ = -1;  // самый низкий заряд трекеров PICO, %; -1 — неизвестен
+    int calibration_request_ = 0;
+    int calibration_result_ = kCalibrationNotRequested;
     bool app_connected_ = false;
     bool tracking_ = true;
     int packets_per_second_ = 0;

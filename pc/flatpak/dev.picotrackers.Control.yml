@@ -1,0 +1,35 @@
+# Flatpak программы PICO Trackers (flatpak/build-flatpak.sh → build/PICOtrackers.flatpak). Внутри — та же программа,
+# что для Linux (build/picotrackers), с GTK и libadwaita из runtime GNOME. Песочнице открыто только то, без чего
+# программа не работает (platform_linux.go — как она ведёт себя во Flatpak).
+id: dev.picotrackers.Control
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: picotrackers
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=all                              # шлем по USB-кабелю (adb)
+  - --share=network                           # драйвер SteamVR (UDP 127.0.0.1), adb по Wi-Fi, GitHub, загрузка adb
+  - --talk-name=org.freedesktop.Flatpak       # flatpak-spawn --host: запущен ли SteamVR, vrpathreg, steam://
+  - --filesystem=xdg-config/openvr:create     # openvrpaths.vrpath — регистрация драйвера в SteamVR
+  - --filesystem=xdg-config/autostart:create  # «Запускать при входе в систему»
+  - --filesystem=~/.android:create            # ключ adb: шлем уже доверяет этому компьютеру
+modules:
+  - name: picotrackers
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 picotrackers /app/bin/picotrackers
+      - install -Dm644 icon.svg /app/share/icons/hicolor/scalable/apps/dev.picotrackers.Control.svg
+      - install -Dm644 dev.picotrackers.Control.desktop -t /app/share/applications
+      - install -Dm644 dev.picotrackers.Control.metainfo.xml -t /app/share/metainfo
+    sources:
+      - type: file
+        path: ../build/picotrackers
+      - type: file
+        path: ../icon.svg
+      - type: file
+        path: ../linux/dev.picotrackers.Control.desktop
+      - type: file
+        path: ../linux/dev.picotrackers.Control.metainfo.xml

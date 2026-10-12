@@ -1,6 +1,7 @@
 ; Установщик PICO Trackers для Windows (Inno Setup 7). Собирается в build-windows.sh:
 ;   ISCC /DAppVersion=… /DSourceDir=<папка программы> /DResDir=<значок и картинки> /DOutputDir=… installer.iss
 ;
+; Языки: английский и русский — по языку Windows (тексты — в [Messages] и [CustomMessages], ru.* и en.*).
 ; Ставит программу для текущего пользователя (без прав администратора) и по галочке — драйвер SteamVR
 ; (picotrackers.exe install-driver). Приложение на шлем ставит мастер в самой программе при первом запуске.
 ; Деинсталлятор снимает драйвер с регистрации в SteamVR и удаляет данные программы (picotrackers.exe uninstall).
@@ -19,9 +20,9 @@ AppName=PICO Trackers
 AppVersion={#AppVersion}
 AppVerName=PICO Trackers {#AppVersion}
 AppPublisher=PICOtrackers
-AppComments=PICO Motion Trackers в SteamVR через Steam Link
+AppComments=PICO Motion Trackers in SteamVR over Steam Link
 VersionInfoVersion={#AppVersion}
-VersionInfoDescription=Установка PICO Trackers
+VersionInfoDescription=PICO Trackers Setup
 DefaultDirName={autopf}\PICO Trackers
 DefaultGroupName=PICO Trackers
 DisableProgramGroupPage=yes
@@ -45,17 +46,54 @@ SolidCompression=yes
 ShowLanguageDialog=no
 
 [Languages]
+; Первый — для Windows не на русском (Inno выбирает язык по языку интерфейса Windows).
+Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Messages]
-WelcomeLabel2=Программа установит [name/ver] на ваш компьютер.%n%nPICO Trackers передаёт PICO Motion Trackers в SteamVR, когда вы играете через Steam Link.%n%nПеред установкой лучше закрыть SteamVR.
-FinishedLabel=Программа [name] установлена.%n%nПри первом запуске она поможет поставить приложение на шлем: подключите PICO к компьютеру кабелем и включите в шлеме отладку по USB.
-FinishedLabelNoIcons=Программа [name] установлена.%n%nПри первом запуске она поможет поставить приложение на шлем: подключите PICO к компьютеру кабелем и включите в шлеме отладку по USB.
+en.WelcomeLabel2=This will install [name/ver] on your computer.%n%nPICO Trackers brings PICO Motion Trackers into SteamVR when you play over Steam Link.%n%nIt is better to close SteamVR before installing.
+en.FinishedLabel=[name] is installed.%n%nOn the first start it will help you install the app on the headset: connect the PICO to the computer with a cable and turn on USB debugging in the headset.
+en.FinishedLabelNoIcons=[name] is installed.%n%nOn the first start it will help you install the app on the headset: connect the PICO to the computer with a cable and turn on USB debugging in the headset.
+ru.WelcomeLabel2=Программа установит [name/ver] на ваш компьютер.%n%nPICO Trackers передаёт PICO Motion Trackers в SteamVR, когда вы играете через Steam Link.%n%nПеред установкой лучше закрыть SteamVR.
+ru.FinishedLabel=Программа [name] установлена.%n%nПри первом запуске она поможет поставить приложение на шлем: подключите PICO к компьютеру кабелем и включите в шлеме отладку по USB.
+ru.FinishedLabelNoIcons=Программа [name] установлена.%n%nПри первом запуске она поможет поставить приложение на шлем: подключите PICO к компьютеру кабелем и включите в шлеме отладку по USB.
+
+[CustomMessages]
+en.TaskDriver=Install the SteamVR driver (trackers appear in SteamVR)
+en.TaskAutostart=Start PICO Trackers when you sign in to Windows
+en.GroupAdditional=Additional:
+en.InstallingDriver=Installing the SteamVR driver…
+en.DriverInstalled=SteamVR driver installed
+en.DriverNotInstalled=SteamVR driver not installed
+en.SteamVRRunningInstall=SteamVR is running, and Windows does not allow replacing the driver it has loaded. Close SteamVR and press “Retry”.
+en.SkipDriverInstall=If you skip, you can install the driver later in the program: menu → “Setup wizard”.
+en.RemovingDriver=Removing the SteamVR driver…
+en.DriverNotRemoved=SteamVR driver not removed
+en.SteamVRRunningUninstall=SteamVR is running and holds the driver. Close SteamVR and press “Retry”.
+en.SkipDriverRemove=If you skip, the driver stays registered in SteamVR.
+en.ErrorCode=Error %1.
+en.Retry=Retry
+en.Skip=Skip
+ru.TaskDriver=Установить драйвер SteamVR (трекеры появятся в SteamVR)
+ru.TaskAutostart=Запускать PICO Trackers при входе в Windows
+ru.GroupAdditional=Дополнительно:
+ru.InstallingDriver=Установка драйвера SteamVR…
+ru.DriverInstalled=Драйвер SteamVR установлен
+ru.DriverNotInstalled=Драйвер SteamVR не установлен
+ru.SteamVRRunningInstall=SteamVR запущен, а Windows не даёт заменить загруженный им драйвер. Закройте SteamVR и нажмите «Повторить».
+ru.SkipDriverInstall=Если пропустить, драйвер можно будет установить позже в программе: меню → «Мастер установки».
+ru.RemovingDriver=Удаление драйвера SteamVR…
+ru.DriverNotRemoved=Драйвер SteamVR не удалён
+ru.SteamVRRunningUninstall=SteamVR запущен и держит драйвер. Закройте SteamVR и нажмите «Повторить».
+ru.SkipDriverRemove=Если пропустить, драйвер останется зарегистрированным в SteamVR.
+ru.ErrorCode=Ошибка %1.
+ru.Retry=Повторить
+ru.Skip=Пропустить
 
 [Tasks]
-Name: "driver"; Description: "Установить драйвер SteamVR (трекеры появятся в SteamVR)"
+Name: "driver"; Description: "{cm:TaskDriver}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "autostart"; Description: "Запускать PICO Trackers при входе в Windows"; GroupDescription: "Дополнительно:"; Flags: unchecked
+Name: "autostart"; Description: "{cm:TaskAutostart}"; GroupDescription: "{cm:GroupAdditional}"; Flags: unchecked
 
 [InstallDelete]
 ; DLL от прошлой версии: у GTK при обновлении меняются имена библиотек.
@@ -105,8 +143,9 @@ end;
 { Повторять ли действие: окно с кнопками «Повторить» / «Пропустить». При /SUPPRESSMSGBOXES — «Пропустить». }
 function AskRetry(const Instruction, Text: String): Boolean;
 begin
-  Result := SuppressibleTaskDialogMsgBox(Instruction, Text, mbError, MB_RETRYCANCEL, ['Повторить', 'Пропустить'],
-    0, IDCANCEL) = IDRETRY;
+  { Строка не должна начинаться с «[» — Inno примет её за заголовок секции. }
+  Result := SuppressibleTaskDialogMsgBox(Instruction, Text, mbError, MB_RETRYCANCEL, [CustomMessage('Retry'),
+    CustomMessage('Skip')], 0, IDCANCEL) = IDRETRY;
 end;
 
 { Запущен программой для обновления (параметр /UPDATE). }
@@ -131,21 +170,20 @@ var
   Code: Integer;
   Message: String;
 begin
-  WizardForm.StatusLabel.Caption := 'Установка драйвера SteamVR…';
+  WizardForm.StatusLabel.Caption := CustomMessage('InstallingDriver');
   repeat
     Code := RunProgram('install-driver', Message);
     if Code = 0 then
     begin
       if Message <> '' then
-        SuppressibleTaskDialogMsgBox('Драйвер SteamVR установлен', Message, mbInformation, MB_OK, [], 0, IDOK);
+        SuppressibleTaskDialogMsgBox(CustomMessage('DriverInstalled'), Message, mbInformation, MB_OK, [], 0, IDOK);
       Exit;
     end;
     if Code = SteamVRRunning then
-      Message := 'SteamVR запущен, а Windows не даёт заменить загруженный им драйвер. Закройте SteamVR и нажмите «Повторить».'
+      Message := CustomMessage('SteamVRRunningInstall')
     else if Message = '' then
-      Message := 'Ошибка ' + IntToStr(Code) + '.';
-  until not AskRetry('Драйвер SteamVR не установлен',
-    Message + #13#10#13#10 + 'Если пропустить, драйвер можно будет установить позже в программе: меню → «Мастер установки».');
+      Message := FmtMessage(CustomMessage('ErrorCode'), [IntToStr(Code)]);
+  until not AskRetry(CustomMessage('DriverNotInstalled'), Message + #13#10#13#10 + CustomMessage('SkipDriverInstall'));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -165,15 +203,14 @@ var
 begin
   if CurUninstallStep <> usUninstall then
     Exit;
-  UninstallProgressForm.StatusLabel.Caption := 'Удаление драйвера SteamVR…';
+  UninstallProgressForm.StatusLabel.Caption := CustomMessage('RemovingDriver');
   repeat
     Code := RunProgram('uninstall', Message);
     if Code = 0 then
       Exit;
     if Code = SteamVRRunning then
-      Message := 'SteamVR запущен и держит драйвер. Закройте SteamVR и нажмите «Повторить».'
+      Message := CustomMessage('SteamVRRunningUninstall')
     else if Message = '' then
-      Message := 'Ошибка ' + IntToStr(Code) + '.';
-  until not AskRetry('Драйвер SteamVR не удалён',
-    Message + #13#10#13#10 + 'Если пропустить, драйвер останется зарегистрированным в SteamVR.');
+      Message := FmtMessage(CustomMessage('ErrorCode'), [IntToStr(Code)]);
+  until not AskRetry(CustomMessage('DriverNotRemoved'), Message + #13#10#13#10 + CustomMessage('SkipDriverRemove'));
 end;

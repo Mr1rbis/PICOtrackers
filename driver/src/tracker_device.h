@@ -26,6 +26,8 @@ public:
 
     // Передаёт позу в SteamVR, если устройство уже активировано.
     void update(const vr::DriverPose_t &pose);
+    // Заряд для SteamVR, %: у виртуального трекера — самый низкий из трекеров PICO; < 0 — неизвестен.
+    void set_battery(int percent);
 
     // Объект, который отдаём SteamVR в TrackedDeviceAdded (на Windows — обёртка под MSVC ABI).
     vr::ITrackedDeviceServerDriver *steamvr_interface();
@@ -54,6 +56,9 @@ private:
     Joint joint_;
     uint32_t object_id_ = vr::k_unTrackedDeviceIndexInvalid;
     vr::DriverPose_t pose_{};
+    int battery_ = -1;
+
+    void apply_battery();
 
 #ifdef _WIN32
     MsvcShim shim_{nullptr, this};

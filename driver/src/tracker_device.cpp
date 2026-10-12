@@ -34,27 +34,44 @@ vr::EVRInitError TrackerDevice::Activate(uint32_t object_id) {
     props->SetInt32Property(c, vr::Prop_ControllerRoleHint_Int32, vr::TrackedControllerRole_OptOut);
     props->SetBoolProperty(c, vr::Prop_WillDriftInYaw_Bool, false);
     props->SetBoolProperty(c, vr::Prop_DeviceIsWireless_Bool, true);
-    props->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, false);
 
-    // Иконки статуса — стандартные иконки Vive Tracker из драйвера htc.
-    props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceOff_String, "{htc}/icons/tracker_status_off.png");
+    // Иконки статуса в окне SteamVR — свои (силуэт трекера PICO, driver/icons/make_icons.py), рядом версии _2x.
+    props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceOff_String, "{picotrackers}/icons/pico_tracker_off.png");
     props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceSearching_String,
-                             "{htc}/icons/tracker_status_searching.gif");
+                             "{picotrackers}/icons/pico_tracker_searching.gif");
     props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceSearchingAlert_String,
-                             "{htc}/icons/tracker_status_searching_alert.gif");
-    props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceReady_String, "{htc}/icons/tracker_status_ready.png");
+                             "{picotrackers}/icons/pico_tracker_searching_alert.gif");
+    props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceReady_String, "{picotrackers}/icons/pico_tracker_ready.png");
     props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceReadyAlert_String,
-                             "{htc}/icons/tracker_status_ready_alert.png");
-    props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceNotReady_String, "{htc}/icons/tracker_status_error.png");
-    props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceStandby_String, "{htc}/icons/tracker_status_standby.png");
+                             "{picotrackers}/icons/pico_tracker_ready_alert.png");
+    props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceNotReady_String,
+                             "{picotrackers}/icons/pico_tracker_error.png");
+    props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceStandby_String,
+                             "{picotrackers}/icons/pico_tracker_standby.png");
     props->SetStringProperty(c, vr::Prop_NamedIconPathDeviceAlertLow_String,
-                             "{htc}/icons/tracker_status_ready_low.png");
+                             "{picotrackers}/icons/pico_tracker_ready_low.png");
 
+    apply_battery();
     log("трекер %s (%s) активирован, id %u", serial_.c_str(), role_.c_str(), object_id);
     return vr::VRInitError_None;
 }
 
 void TrackerDevice::Deactivate() { object_id_ = vr::k_unTrackedDeviceIndexInvalid; }
+
+void TrackerDevice::set_battery(int percent) {
+    if (percent == battery_) return;
+    battery_ = percent;
+    apply_battery();
+}
+
+void TrackerDevice::apply_battery() {
+    if (object_id_ == vr::k_unTrackedDeviceIndexInvalid) return;
+    auto *props = vr::VRProperties();
+    auto c = props->TrackedDeviceToPropertyContainer(object_id_);
+    props->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, battery_ >= 0);
+    props->SetBoolProperty(c, vr::Prop_DeviceIsCharging_Bool, false);
+    if (battery_ >= 0) props->SetFloatProperty(c, vr::Prop_DeviceBatteryPercentage_Float, battery_ / 100.0f);
+}
 
 void TrackerDevice::DebugRequest(const char *, char *response, uint32_t response_size) {
     if (response_size > 0) response[0] = '\0';

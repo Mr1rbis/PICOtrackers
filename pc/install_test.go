@@ -145,3 +145,29 @@ func TestInstallProgram(t *testing.T) {
 		}
 	}
 }
+
+// --dev: удаление снимает драйвер и стирает данные, но установленную программу, пункт меню и автозапуск не трогает.
+func TestUninstallDevKeepsProgram(t *testing.T) {
+	if !selfInstall {
+		t.Skip("на этой платформе программу ставит установщик")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := installProgram(true, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	setAutostart(true)
+	defer func(was bool) { devMode = was }(devMode)
+	devMode = true
+	if err := uninstall(func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{installedExecutable(), iconPath(), menuEntryPath(), autostartPath()} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("режим --dev удалил %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(dataDir()); !os.IsNotExist(err) {
+		t.Fatalf("%s не удалён: %v", dataDir(), err)
+	}
+}

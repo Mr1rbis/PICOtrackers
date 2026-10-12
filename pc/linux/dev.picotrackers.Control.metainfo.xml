@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Описание программы для Flatpak и магазинов приложений (AppStream). -->
+<component type="desktop-application">
+  <id>dev.picotrackers.Control</id>
+  <name>PICO Trackers</name>
+  <summary>PICO Motion Trackers in SteamVR over Steam Link</summary>
+  <summary xml:lang="ru">PICO Motion Trackers в SteamVR через Steam Link</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <developer id="dev.picotrackers">
+    <name>PICOtrackers</name>
+  </developer>
+  <description>
+    <p>Brings PICO Motion Trackers into SteamVR when you play PC VR on a PICO 4 / 4 Pro over Steam Link:
+      a SteamVR driver, an app for the headset and this program, which installs them, shows the state of the
+      trackers (connection, calibration, battery) and turns trackers on and off on the fly.</p>
+    <p xml:lang="ru">Передаёт PICO Motion Trackers в SteamVR, когда вы играете в ПК-VR на PICO 4 / 4 Pro через
+      Steam Link: драйвер SteamVR, приложение для шлема и эта программа, которая их ставит, показывает состояние
+      трекеров (подключение, калибровка, заряд) и включает и выключает трекеры на лету.</p>
+  </description>
+  <launchable type="desktop-id">dev.picotrackers.Control.desktop</launchable>
+  <url type="homepage">https://github.com/Mr1rbis/PICOtrackers</url>
+  <url type="bugtracker">https://github.com/Mr1rbis/PICOtrackers/issues</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.7" date="2026-10-12">
+      <description>
+        <p>Calibrate PICO trackers from the PC, tracker battery in the program and SteamVR, English interface,
+          AppImage and Flatpak.</p>
+      </description>
+    </release>
+  </releases>
+</component>

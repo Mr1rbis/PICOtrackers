@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PICO Trackers
+Comment=PICO Motion Trackers in SteamVR
+Comment[ru]=Трекеры PICO в SteamVR
+Exec=picotrackers
+Icon=dev.picotrackers.Control
+Terminal=false
+Categories=Game;Utility;
+Keywords=PICO;SteamVR;VR;tracker;full body;
+Keywords[ru]=PICO;SteamVR;VR;трекер;фулбади;

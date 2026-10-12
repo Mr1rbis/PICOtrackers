@@ -22,6 +22,7 @@ namespace picotrackers {
 namespace {
 
 constexpr auto kAnnounceInterval = std::chrono::seconds(1);
+constexpr auto kCalibrationResend = std::chrono::milliseconds(200);
 
 #ifdef _WIN32
 void close_socket(Socket s) { closesocket(s); }
@@ -121,6 +122,13 @@ bool Receiver::latest(Snapshot &out) const {
     return true;
 }
 
+bool Receiver::latest_status(Status &out) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!has_status_) return false;
+    out = status_;
+    return true;
+}
+
 std::string Receiver::headset_ip() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return headset_ip_;
@@ -141,12 +149,13 @@ void Receiver::send_to_app(const std::string &message) {
     send_to(fd_, message.data(), message.size(), localhost, kAppPort);
 }
 
-void Receiver::announce(ControlCommand command) {
+void Receiver::announce(ControlCommand command, uint16_t request) {
     ControlPacket packet{};
     memcpy(packet.magic, kControlMagic, sizeof(packet.magic));
     packet.data_port = port_;
     packet.command = command;
     packet.rate_hz = rate_.load();
+    packet.request = request;
 
     for (in_addr address : broadcast_addresses()) send_to(fd_, &packet, sizeof(packet), address, kControlPort);
 
@@ -158,7 +167,7 @@ void Receiver::announce(ControlCommand command) {
 
 void Receiver::run() {
     char buffer[2048];
-    auto next_announce = Clock::now();
+    auto next_announce = Clock::now(), next_calibration = Clock::now();
     bool requested = false;
     while (running_.load()) {
         auto now = Clock::now();
@@ -170,6 +179,11 @@ void Receiver::run() {
             announce(kCommandBye);
         }
         requested = request;
+        if (calibration_sends_.load() > 0 && now >= next_calibration) {
+            next_calibration = now + kCalibrationResend;
+            calibration_sends_--;
+            announce(kCommandCalibrate, calibration_request_.load());
+        }
 
         sockaddr_in from{};
         socklen_t from_len = sizeof(from);
@@ -181,6 +195,14 @@ void Receiver::run() {
             std::lock_guard<std::mutex> lock(mutex_);
             app_command_.assign(buffer + 4, n - 4);
             app_command_received_ = Clock::now();
+            continue;
+        }
+
+        if (n == static_cast<int>(sizeof(StatusPacket)) && memcmp(buffer, kStatusMagic, sizeof(kStatusMagic)) == 0) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            memcpy(&status_.packet, buffer, sizeof(StatusPacket));
+            status_.received = Clock::now();
+            has_status_ = true;
             continue;
         }
 

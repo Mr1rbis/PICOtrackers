@@ -9,3 +9,4 @@ cd "$(dirname "$0")"
 ./prepare_assets.sh
 go build -ldflags "-s -w" -o build/picotrackers .
 echo "готово: $(pwd)/build/picotrackers"
+echo "проверить свою сборку, не трогая установленную версию: build/picotrackers --dev"
