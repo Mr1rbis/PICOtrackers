@@ -3,7 +3,8 @@
 // Настройки программы на ПК (трекинг вкл/выкл, набор трекеров, частота) драйвер хранит в настройках
 // SteamVR и работает с ними и без программы. Пока трекеры PICO не подключены к шлему, в SteamVR
 // ничего не передаётся: скелет без них PICO достраивает сам, и ноги были бы выдуманными.
-// Состояние трекеров PICO со шлема (откалиброваны ли, заряд) уходит программе, заряд — и в SteamVR;
+// Состояние трекеров PICO со шлема (откалиброваны ли, заряд) уходит программе, заряд — и в SteamVR (суставам ноги —
+// заряд трекера на этой ноге, поясу — трекера на поясе, остальным — самый низкий);
 // просьбу программы «откалибровать трекеры» драйвер передаёт шлему.
 
 #include <openvr_driver.h>
@@ -44,35 +45,36 @@ struct TrackerSpec {
     const char *name;
     Joint joint;
     const char *role;
+    TrackerPlace place;  // чей заряд показывать: трекера PICO на этой ноге / поясе; kPlaceUnknown — самый низкий
 };
 
 // Все 24 сустава скелета. Стопы (left/right_foot) — по суставу лодыжки: он ближе к кости стопы
 // аватара; сустав носка (kLeftFoot) — left/right_toes. TrackerRole_None — роли в SteamVR нет.
 constexpr TrackerSpec kTrackerSpecs[] = {
-    {"waist", kPelvis, "TrackerRole_Waist"},
-    {"chest", kSpine3, "TrackerRole_Chest"},
-    {"left_foot", kLeftAnkle, "TrackerRole_LeftFoot"},
-    {"right_foot", kRightAnkle, "TrackerRole_RightFoot"},
-    {"left_knee", kLeftKnee, "TrackerRole_LeftKnee"},
-    {"right_knee", kRightKnee, "TrackerRole_RightKnee"},
-    {"left_elbow", kLeftElbow, "TrackerRole_LeftElbow"},
-    {"right_elbow", kRightElbow, "TrackerRole_RightElbow"},
-    {"left_shoulder", kLeftShoulder, "TrackerRole_LeftShoulder"},
-    {"right_shoulder", kRightShoulder, "TrackerRole_RightShoulder"},
-    {"left_hip", kLeftHip, "TrackerRole_None"},
-    {"right_hip", kRightHip, "TrackerRole_None"},
-    {"spine1", kSpine1, "TrackerRole_None"},
-    {"spine2", kSpine2, "TrackerRole_None"},
-    {"left_toes", kLeftFoot, "TrackerRole_None"},
-    {"right_toes", kRightFoot, "TrackerRole_None"},
-    {"neck", kNeck, "TrackerRole_None"},
-    {"left_collar", kLeftCollar, "TrackerRole_None"},
-    {"right_collar", kRightCollar, "TrackerRole_None"},
-    {"head", kHead, "TrackerRole_None"},
-    {"left_wrist", kLeftWrist, "TrackerRole_None"},
-    {"right_wrist", kRightWrist, "TrackerRole_None"},
-    {"left_hand", kLeftHand, "TrackerRole_None"},
-    {"right_hand", kRightHand, "TrackerRole_None"},
+    {"waist", kPelvis, "TrackerRole_Waist", kPlaceWaist},
+    {"chest", kSpine3, "TrackerRole_Chest", kPlaceUnknown},
+    {"left_foot", kLeftAnkle, "TrackerRole_LeftFoot", kPlaceLeftLeg},
+    {"right_foot", kRightAnkle, "TrackerRole_RightFoot", kPlaceRightLeg},
+    {"left_knee", kLeftKnee, "TrackerRole_LeftKnee", kPlaceLeftLeg},
+    {"right_knee", kRightKnee, "TrackerRole_RightKnee", kPlaceRightLeg},
+    {"left_elbow", kLeftElbow, "TrackerRole_LeftElbow", kPlaceUnknown},
+    {"right_elbow", kRightElbow, "TrackerRole_RightElbow", kPlaceUnknown},
+    {"left_shoulder", kLeftShoulder, "TrackerRole_LeftShoulder", kPlaceUnknown},
+    {"right_shoulder", kRightShoulder, "TrackerRole_RightShoulder", kPlaceUnknown},
+    {"left_hip", kLeftHip, "TrackerRole_None", kPlaceLeftLeg},
+    {"right_hip", kRightHip, "TrackerRole_None", kPlaceRightLeg},
+    {"spine1", kSpine1, "TrackerRole_None", kPlaceWaist},
+    {"spine2", kSpine2, "TrackerRole_None", kPlaceUnknown},
+    {"left_toes", kLeftFoot, "TrackerRole_None", kPlaceLeftLeg},
+    {"right_toes", kRightFoot, "TrackerRole_None", kPlaceRightLeg},
+    {"neck", kNeck, "TrackerRole_None", kPlaceUnknown},
+    {"left_collar", kLeftCollar, "TrackerRole_None", kPlaceUnknown},
+    {"right_collar", kRightCollar, "TrackerRole_None", kPlaceUnknown},
+    {"head", kHead, "TrackerRole_None", kPlaceUnknown},
+    {"left_wrist", kLeftWrist, "TrackerRole_None", kPlaceUnknown},
+    {"right_wrist", kRightWrist, "TrackerRole_None", kPlaceUnknown},
+    {"left_hand", kLeftHand, "TrackerRole_None", kPlaceUnknown},
+    {"right_hand", kRightHand, "TrackerRole_None", kPlaceUnknown},
 };
 
 Quat quat_from_matrix(const vr::HmdMatrix34_t &mat) {
@@ -185,8 +187,9 @@ public:
         if (poses_) feed_calibration(snapshot.packet, hmd, seconds(now));
         update_pico_status(now);
 
-        for (auto &tracker : trackers_) {
-            tracker->set_battery(battery_);
+        for (size_t i = 0; i < trackers_.size(); i++) {
+            auto &tracker = trackers_[i];
+            tracker->set_battery(battery_for(kTrackerSpecs[i].place));
             if (poses_ && tracker->enabled && !tracker->added) add_device(*tracker);
             if (!tracker->added) continue;
             vr::DriverPose_t pose = make_pose(*tracker, snapshot.packet);
@@ -283,20 +286,32 @@ private:
         log("программа просит открыть калибровку трекеров PICO на шлеме (%d)", request);
     }
 
-    // Состояние трекеров PICO со шлема: заряд — всем трекерам SteamVR (самый низкий), остальное — программе.
+    // Заряд для трекера SteamVR с местом place: трекера PICO на этом месте, иначе самый низкий.
+    int battery_for(TrackerPlace place) const {
+        int battery = place <= kPlaceWaist ? battery_[place] : -1;
+        return battery >= 0 ? battery : battery_[kPlaceUnknown];
+    }
+
+    // Состояние трекеров PICO со шлема: заряд — трекерам SteamVR (по месту на теле), остальное — программе.
     void update_pico_status(Receiver::Clock::time_point now) {
         Receiver::Status status;
         pico_known_ = receiver_.latest_status(status) && now - status.received < kPicoStatusStale;
         if (pico_known_) pico_ = status.packet;
-        int battery = -1;
+        int battery[4] = {-1, -1, -1, -1};  // [kPlaceUnknown] — самый низкий из всех, остальные — по месту
         if (pico_known_ && pico_.tracker_count != kTrackerCountUnknown) {
-            for (int i = 0; i < std::min<int>(pico_.tracker_count, kMaxPicoTrackers); i++)
-                if (pico_.trackers[i].battery >= 0 && (battery < 0 || pico_.trackers[i].battery < battery))
-                    battery = pico_.trackers[i].battery;
+            for (int i = 0; i < std::min<int>(pico_.tracker_count, kMaxPicoTrackers); i++) {
+                const PicoTracker &t = pico_.trackers[i];
+                if (t.battery < 0) continue;
+                if (battery[0] < 0 || t.battery < battery[0]) battery[0] = t.battery;
+                TrackerPlace place = tracker_place(t.id);
+                if (place != kPlaceUnknown && place <= kPlaceWaist) battery[place] = t.battery;
+            }
         }
-        if (battery != battery_) {
-            if (battery >= 0) log("заряд трекеров PICO (самый низкий): %d %%", battery);
-            battery_ = battery;
+        if (!std::equal(std::begin(battery), std::end(battery), std::begin(battery_))) {
+            std::copy(std::begin(battery), std::end(battery), std::begin(battery_));
+            if (battery[0] >= 0)
+                log("заряд трекеров PICO: левая нога %d %%, правая %d %%, пояс %d %%, самый низкий %d %% (-1 — нет)",
+                    battery[kPlaceLeftLeg], battery[kPlaceRightLeg], battery[kPlaceWaist], battery[0]);
         }
         std::string description = pico_known_ ? describe_pico() : "";
         if (description != pico_description_) {
@@ -374,7 +389,8 @@ private:
                           pico_.calibration_request, pico_.calibration_result);
             json += buf;
             for (int i = 0; pico_.tracker_count != kTrackerCountUnknown && i < std::min<int>(pico_.tracker_count, kMaxPicoTrackers); i++) {
-                std::snprintf(buf, sizeof(buf), "%s{\"id\":%d,\"battery\":%d}", i ? "," : "", pico_.trackers[i].id,
+                std::snprintf(buf, sizeof(buf), "%s{\"id\":%d,\"place\":%d,\"battery\":%d}", i ? "," : "",
+                              tracker_number(pico_.trackers[i].id), tracker_place(pico_.trackers[i].id),
                               pico_.trackers[i].battery);
                 json += buf;
             }
@@ -462,7 +478,7 @@ private:
     bool pico_known_ = false;  // свежее состояние трекеров PICO со шлема (приложение 1.7+)
     StatusPacket pico_{};
     std::string pico_description_;
-    int battery_ = -1;  // самый низкий заряд трекеров PICO, %; -1 — неизвестен
+    int battery_[4] = {-1, -1, -1, -1};  // заряд трекеров PICO, %, по TrackerPlace ([0] — самый низкий); -1 — неизвестен
     int calibration_request_ = 0;
     int calibration_result_ = kCalibrationNotRequested;
     bool app_connected_ = false;

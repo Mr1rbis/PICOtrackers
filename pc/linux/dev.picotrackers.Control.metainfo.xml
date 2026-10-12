@@ -23,6 +23,13 @@
   <url type="bugtracker">https://github.com/Mr1rbis/PICOtrackers/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.8" date="2026-10-13">
+      <description>
+        <p>Battery of each PICO tracker by body place (left leg, right leg, waist) in the program and SteamVR,
+          own tracker icons in SteamVR, connection and calibration state read from the headset's tracking service,
+          --dev for testing own builds.</p>
+      </description>
+    </release>
     <release version="1.7" date="2026-10-12">
       <description>
         <p>Calibrate PICO trackers from the PC, tracker battery in the program and SteamVR, English interface,

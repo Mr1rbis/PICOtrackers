@@ -3,7 +3,7 @@
 // Подключение, калибровка и заряд — из системной libtrackingclient.pxr.so (она в public.libraries-pxr.txt, приложениям
 // можно): C-обёртки над клиентом сервиса трекинга PICO — CreateClient() (синглтон), GetSwiftConnectState (Swift —
 // внутреннее имя Motion Tracker; {u8 количество, u8 номера[12]}), GetSwiftCalibState, GetSwiftTrackerBattery(номер),
-// getSwiftTrackerMaxBattery. Проверено на PICO 4 Pro (PICO OS 5.13) из adb shell: 2 трекера с номерами 1 и 2, заряд 8
+// getSwiftTrackerMaxBattery, getSwiftTrackerInfo (место трекера на теле, см. read_places). Проверено на PICO 4 Pro (PICO OS 5.13) из adb shell: 2 трекера с номерами 1 и 2, заряд 8
 // из 10, calibrated 0 у неоткалиброванных. (libpxr_api.so из PICO SDK 2.x — обёртка над тем же, но на 5.13 её нет.)
 // В OpenXR-рантайме ничего такого нет, а xrGetBodyTrackingStateBD у неоткалиброванных трекеров отвечает
 // status 0 error 0 — как будто трекеров нет. TrackingService.java страхует первый опрос: если процесс на нём упал,
@@ -44,6 +44,7 @@ typedef void *(*PFN_CreateClient)();
 typedef int (*PFN_GetConnectState)(void *client, ConnectState *state);
 typedef int (*PFN_GetBattery)(void *client, int tracker_id, int *battery);
 typedef int (*PFN_GetInt)(void *client, int *value);
+typedef int (*PFN_GetTrackerInfo)(void *client, void *info);
 typedef XrResult(XRAPI_PTR *PFN_StartCalibAppBD)(XrInstance instance, const char *package, int32_t flag);
 typedef XrResult(XRAPI_PTR *PFN_StartCalibAppPico)(XrInstance instance);
 
@@ -62,6 +63,7 @@ struct Library {
     PFN_GetBattery battery = nullptr;
     PFN_GetInt calib_state = nullptr;
     PFN_GetInt max_battery = nullptr;
+    PFN_GetTrackerInfo tracker_info = nullptr;
 };
 Library g_library;  // только из потока опроса (TrackingService)
 
@@ -91,12 +93,38 @@ bool load_library() {
     g_library.battery = load<PFN_GetBattery>(library, "GetSwiftTrackerBattery");
     g_library.calib_state = load<PFN_GetInt>(library, "GetSwiftCalibState");
     g_library.max_battery = load<PFN_GetInt>(library, "getSwiftTrackerMaxBattery");
+    g_library.tracker_info = load<PFN_GetTrackerInfo>(library, "getSwiftTrackerInfo");
     g_library.client = create ? create() : nullptr;
     LOGI("pxr: libtrackingclient.pxr.so loaded, client=%d connect=%d battery=%d calib=%d max=%d",
          g_library.client != nullptr, g_library.connect_state != nullptr, g_library.battery != nullptr,
          g_library.calib_state != nullptr, g_library.max_battery != nullptr);
     g_library.loaded = g_library.client && g_library.connect_state;
     return g_library.loaded;
+}
+
+// Места трекеров на теле по номеру трекера. getSwiftTrackerInfo заполняет TrackerInfo — 3 слота по 0x48 байт
+// (разобрано дизассемблером и на шлеме): +0 подключён (u32), +4 номер (u32, 1–3), +8 модель «TR0189», +0x12 серийный
+// номер, +0x40 место (u32: 1 левая нога, 2 правая, 3 — пояс). Неизвестно — kPlaceUnknown.
+void read_places(void *client, uint8_t (&places)[16]) {
+    memset(places, picotrackers::kPlaceUnknown, sizeof(places));
+    alignas(8) uint8_t info[1024]{};  // с запасом: структура PICO — 0xd8 байт
+    if (!g_library.tracker_info || g_library.tracker_info(client, info) != 0) return;
+    for (int slot = 0; slot < 3; slot++) {
+        uint32_t connected, number, place;
+        memcpy(&connected, info + slot * 0x48, 4);
+        memcpy(&number, info + slot * 0x48 + 4, 4);
+        memcpy(&place, info + slot * 0x48 + 0x40, 4);
+        if (connected && number < 16 && place <= picotrackers::kPlaceWaist) places[number] = static_cast<uint8_t>(place);
+    }
+}
+
+const char *place_name(uint8_t place, bool russian) {
+    switch (place) {
+    case picotrackers::kPlaceLeftLeg: return russian ? "левая нога" : "left leg";
+    case picotrackers::kPlaceRightLeg: return russian ? "правая нога" : "right leg";
+    case picotrackers::kPlaceWaist: return russian ? "пояс" : "waist";
+    }
+    return nullptr;
 }
 
 // Заряд в процентах: по полному заряду из библиотеки; не сказала — уровни 0–5 (как у PICO SDK) или уже проценты.
@@ -161,8 +189,11 @@ bool poll() {
     memset(trackers, 0, sizeof(trackers));
     int raw[kMaxPicoTrackers];
     std::fill(std::begin(raw), std::end(raw), -1);
+    uint8_t places[16];
+    read_places(client, places);
     for (int i = 0; count != kTrackerCountUnknown && i < count; i++) {
-        trackers[i].id = state->ids[i];
+        uint8_t number = state->ids[i] & picotrackers::kTrackerNumberMask;
+        trackers[i].id = static_cast<uint8_t>(number | places[number] << 4);
         if (g_library.battery && g_library.battery(client, state->ids[i], &raw[i]) != 0) raw[i] = -1;
     }
     int calibrated = -1;
@@ -179,8 +210,11 @@ bool poll() {
     }
     if (changed) {
         std::string list;
-        for (int i = 0; count != kTrackerCountUnknown && i < count; i++)
-            list += " #" + std::to_string(trackers[i].id) + "=" + std::to_string(raw[i]);
+        for (int i = 0; count != kTrackerCountUnknown && i < count; i++) {
+            const char *place = place_name(picotrackers::tracker_place(trackers[i].id), false);
+            list += " #" + std::to_string(picotrackers::tracker_number(trackers[i].id)) + "=" + std::to_string(raw[i]) +
+                    (place ? std::string("(") + place + ")" : "");
+        }
         LOGI("pxr: result=%d trackers=%d%s calibrated=%d max=%d", r, count == kTrackerCountUnknown ? -1 : count,
              list.c_str(), calibrated, g_max_battery);
     }
@@ -198,7 +232,9 @@ std::string describe(bool russian) {
     std::string batteries;
     for (int i = 0; i < g_count; i++) {
         if (g_trackers[i].battery < 0) continue;
-        batteries += (batteries.empty() ? "" : ", ") + std::to_string(g_trackers[i].battery) + " %";
+        const char *place = place_name(picotrackers::tracker_place(g_trackers[i].id), russian);
+        batteries += (batteries.empty() ? "" : ", ") + (place ? std::string(place) + " " : "") +
+                     std::to_string(g_trackers[i].battery) + " %";
     }
     if (!batteries.empty()) text += (russian ? ", заряд " : ", battery ") + batteries;
     if (g_calibrated == 1) text += russian ? ", откалиброваны" : ", calibrated";

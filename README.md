@@ -143,8 +143,9 @@ flatpak run dev.picotrackers.Control      # или из меню приложе�
 **Трекеры PICO** (строка в окне): подключены ли, откалиброваны ли и заряд каждого (ниже 20 % — предупреждение).
 Если трекеры подключены, но не откалиброваны, появляется кнопка **«Откалибровать»**: на шлеме откроется
 калибровка PICO — наденьте шлем и посмотрите на трекеры на ногах, после калибровки PICO вернёт вас в Steam Link.
-Если шлем не смог открыть калибровку сам, программа откроет её по adb. Заряд виден и в SteamVR: у каждого трекера
-SteamVR — самый низкий заряд из трекеров PICO. Для этого нужно приложение на шлеме 1.7+.
+Если шлем не смог открыть калибровку сам, программа откроет её по adb. Заряд виден и в SteamVR: суставы левой ноги
+показывают заряд левого трекера, правой — правого, пояс — трекера на поясе (если он есть), остальные — самый низкий
+(с версии 1.8; в 1.7 — у всех самый низкий). Для этого нужно приложение на шлеме 1.7+.
 
 **Язык.** Программа, мастер, установщик Windows и приложение на шлеме — на русском или английском, как язык
 системы. Сменить язык программы: Настройки → «Язык · Language» (программа перезапустится).
@@ -380,8 +381,9 @@ The app window:
 (a warning below 20%). If the trackers are connected but not calibrated, a **"Calibrate"** button appears: PICO's
 calibration opens on the headset; put it on and look at the trackers on your legs, and after calibration PICO
 takes you back to Steam Link. If the headset can't open the calibration by itself, the app opens it over adb. The
-battery shows in SteamVR too: every SteamVR tracker gets the lowest battery of the PICO trackers. This needs the
-headset app 1.7+.
+battery shows in SteamVR too: left-leg joints show the left tracker's battery, right-leg joints the right one's, the
+waist the waist tracker's (if you have one), everything else the lowest (since 1.8; in 1.7 everything shows the
+lowest). This needs the headset app 1.7+.
 
 **Language.** The app, the wizard, the Windows installer and the headset app are in English or Russian, following
 the system language. To switch the app's language: Settings → "Language · Язык" (the app restarts).

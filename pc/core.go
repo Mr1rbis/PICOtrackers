@@ -31,7 +31,7 @@ const (
 	adbWifiPort    = 5555
 	steamVRAppID   = 250820
 	driverName     = "picotrackers"
-	appVersion     = "1.7"
+	appVersion     = "1.8"
 	githubRepo     = "Mr1rbis/PICOtrackers" // релизы: обновление программы (update.go)
 
 	calibrationPackage = "com.pvr.swift"                 // приложение PICO «Motion Tracker»: калибровка трекеров

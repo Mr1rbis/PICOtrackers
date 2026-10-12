@@ -167,7 +167,6 @@ var translations = map[string]string{
 	"не подключены — включите трекеры":              "not connected — turn the trackers on",
 	"нет данных от трекеров (код %d)":               "no data from the trackers (code %d)",
 	"подключено: %d":                                "connected: %d",
-	"заряд %s":                                      "battery %s",
 	"зарядите трекеры":                              "charge the trackers",
 	"заряд — после обновления приложения на шлеме":  "battery — after updating the headset app",
 	"Открываю…":                                     "Opening…",
@@ -334,4 +333,8 @@ var translations = map[string]string{
 	"Программа не встраивается в систему: не ставит себя в меню и ~/.local/bin, не меняет автозапуск и не проверяет обновления. Драйвер и приложение на шлем мастер ставит как обычно":                     "The program doesn't integrate into the system: it doesn't add itself to the menu or ~/.local/bin, doesn't change autostart and doesn't check for updates. The wizard installs the driver and the headset app as usual",
 	"Драйвер SteamVR и настройки. Установленную программу, пункт меню и автозапуск режим --dev не трогает":                                                                                                 "SteamVR driver and settings. --dev mode leaves the installed program, its menu entry and autostart alone",
 	"Драйвер будет снят с регистрации в SteamVR и удалён, настройки программы — удалены. Установленная программа, её пункт меню и автозапуск останутся (режим --dev). Приложение на шлеме тоже останется.": "The driver will be unregistered from SteamVR and deleted, the program's settings will be deleted. The installed program, its menu entry and autostart stay (--dev mode). The headset app stays too.",
+	"левая нога":  "left leg",
+	"правая нога": "right leg",
+	"пояс":        "waist",
+	"заряд: %s":   "battery: %s",
 }

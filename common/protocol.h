@@ -86,6 +86,19 @@ enum BodyTrackingError : int8_t {  // BodyTrackingMessage из PICO SDK
     kBodyErrorPoseError = 7,
 };
 constexpr int kMaxPicoTrackers = 12;
+
+// Место трекера PICO на теле — в старших 4 битах PicoTracker::id (номер трекера — в младших; так драйверы и программы
+// 1.7, где места не было, пакет понимают по-прежнему). Числа — как в getSwiftTrackerInfo у PICO (1 и 2 сверены с логом
+// системного трекинга «Swifter_StatusInfo … Role:7/8», 3 — трекер на поясе, не проверено).
+enum TrackerPlace : uint8_t {
+    kPlaceUnknown = 0,
+    kPlaceLeftLeg = 1,
+    kPlaceRightLeg = 2,
+    kPlaceWaist = 3,
+};
+constexpr uint8_t kTrackerNumberMask = 0x0f;
+inline uint8_t tracker_number(uint8_t id) { return id & kTrackerNumberMask; }
+inline TrackerPlace tracker_place(uint8_t id) { return static_cast<TrackerPlace>(id >> 4); }
 constexpr uint8_t kTrackerCountUnknown = 0xff;
 constexpr int16_t kCalibrationNotRequested = -32768;
 
@@ -113,7 +126,7 @@ struct ControlPacket {
 };
 
 struct PicoTracker {
-    uint8_t id;      // номер трекера у PICO
+    uint8_t id;      // номер трекера у PICO (младшие 4 бита) и TrackerPlace (старшие)
     int8_t battery;  // заряд, % (0–100); -1 — неизвестен
 };
 

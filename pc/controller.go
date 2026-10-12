@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,7 @@ type PicoStatus struct {
 	CalibrationResult  int `json:"calibration_result"`
 	Trackers           []struct {
 		ID      int `json:"id"`
+		Place   int `json:"place"`   // 1 левая нога, 2 правая, 3 пояс, 0 — неизвестно (драйвер 1.7 его не шлёт)
 		Battery int `json:"battery"` // %, -1 — неизвестен
 	} `json:"trackers"`
 }
@@ -76,17 +78,41 @@ func (p *PicoStatus) NotCalibrated() bool {
 	return (p.Status == 0 && p.Error == picoErrorNotCalibrated) || (p.Calibrated == 0 && p.Count > 0)
 }
 
-// Batteries — заряд подключённых трекеров PICO, % (только известный).
-func (p *PicoStatus) Batteries() (levels []int) {
+// Места трекеров PICO на теле (PicoStatus.Trackers[].Place, common/protocol.h TrackerPlace).
+var picoPlaces = map[int]string{1: N("левая нога"), 2: N("правая нога"), 3: N("пояс")}
+
+// BatteryText — заряд подключённых трекеров PICO одной строкой («левая нога 80 %, правая нога 60 %»; место
+// неизвестно — просто проценты, по порядку мест); low — какой-то трекер ниже lowBattery. "" — заряд неизвестен.
+func (p *PicoStatus) BatteryText() (text string, low bool) {
 	if p == nil {
-		return nil
+		return "", false
 	}
-	for _, t := range p.Trackers {
-		if t.Battery >= 0 {
-			levels = append(levels, t.Battery)
+	trackers := append(p.Trackers[:0:0], p.Trackers...)
+	sort.SliceStable(trackers, func(i, j int) bool { return placeOrder(trackers[i].Place) < placeOrder(trackers[j].Place) })
+	var parts []string
+	for _, t := range trackers {
+		if t.Battery < 0 {
+			continue
 		}
+		level := Tf("%d %%", t.Battery)
+		if place, ok := picoPlaces[t.Place]; ok {
+			level = T(place) + " " + level
+		}
+		parts = append(parts, level)
+		low = low || t.Battery < lowBattery
 	}
-	return
+	if len(parts) == 0 {
+		return "", false
+	}
+	return Tf("заряд: %s", strings.Join(parts, ", ")), low
+}
+
+// placeOrder — порядок в строке: левая нога, правая, пояс, неизвестные.
+func placeOrder(place int) int {
+	if place >= 1 && place <= 3 {
+		return place
+	}
+	return 4
 }
 
 // Snapshot — копия состояния для отрисовки интерфейса.

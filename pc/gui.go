@@ -796,14 +796,7 @@ func (w *window) refreshPico(s Snapshot) {
 	if p != nil && p.Count > 0 {
 		parts = append(parts, Tf("подключено: %d", p.Count))
 	}
-	if levels := p.Batteries(); len(levels) > 0 {
-		var texts []string
-		low := false
-		for _, level := range levels {
-			texts = append(texts, Tf("%d %%", level))
-			low = low || level < lowBattery
-		}
-		battery := Tf("заряд %s", strings.Join(texts, ", "))
+	if battery, low := p.BatteryText(); battery != "" {
 		if low {
 			battery += " — " + T("зарядите трекеры")
 			if state == "success" {

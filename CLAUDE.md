@@ -121,6 +121,16 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
     перезапуск с --wait-pid); Flatpak — в образе flatpak-github-actions:gnome-51 (установка бандла, окно, драйвер в
     ~/.var/app, `flatpak-spawn --host pgrep` через flatpak-session-helper). APK собран, на шлеме не запускался.
 
+13. ✅ Версия 1.8 (2026-10-13, по просьбе пользователя; 1.7 выпущена тегом v1.7 — с AppImage и Flatpak):
+    - **Заряд по месту на теле**: шлем читает места трекеров (`getSwiftTrackerInfo`), драйвер даёт суставам левой ноги
+      заряд левого трекера, правой — правого, поясу (waist, spine1) — трекера на поясе, остальным — самый низкий;
+      программа: «заряд: левая нога 70 %, правая нога 70 %, пояс …». Место передаётся в старших 4 битах номера
+      трекера в PTS1 — драйвер и программа 1.7 пакет понимают как раньше.
+    - Свои иконки трекера в окне SteamVR (рисунок пользователя `driver/icons/pico_tracker.svg`), `--dev`.
+    Проверено: на шлеме `pxr: … #1=7(right leg) #2=7(left leg) calibrated=1 max=10` (сверено с системным логом PICO),
+    драйвер — поддельным vrserver (29 проверок, заряд по ногам), программа — тестом `TestPicoBatteryText`. Драйвер 1.8
+    в настоящем SteamVR ещё не загружался (у пользователя SteamVR шёл с 1.7: «откалиброваны 1, подключено 2, 70 %»).
+
 ## Железо и окружение
 
 **Шлем**
@@ -301,6 +311,11 @@ PICO 4 Pro: сервис PICO Trackers (стартует при загрузке
   `startSwiftCalibration`, `getSwiftTrackerInfo(client, TrackerInfo*)`, колбэки — не разобраны.
   В PICO SDK 2.5.0 то же было `Pxr_GetFitnessBand*` из `libpxr_api.so` (обёртка), но **на PICO OS 5.13 `libpxr_api.so`
   нет** (первая версия 1.7 искала её — заряда не было). В SDK 3.x — `xrGetBodyTrackerBatteryPICO` и т.п. (у рантайма 4 Pro нет).
+  **Место трекера на теле** — `getSwiftTrackerInfo(client, TrackerInfo*)`: 0xd8 байт = 3 слота по 0x48: +0 подключён
+  (u32), +4 номер (u32, 1–3), +8 модель «TR0189», +0x12 серийный номер, +0x24 «1233», +0x40 **место (u32): 1 левая нога,
+  2 правая**, 3 — по-видимому пояс (не проверено: у пользователя 2 трекера). Сверено с системным логом трекинга PICO
+  `SENSOR … Swifter_StatusInfo <серийный> … Role:7` (7 — левая лодыжка, 8 — правая, номера BodyTrackerRole), там же
+  `WearCalibStatus`, `TrackerMode`. Наблюдалось и `status=2 error=4` (LIMITED, PERSISTENT_INVISIBILITY).
   Первый опрос застрахован (TrackingService: метка `pxr_probing`). Проверка из adb shell: маленькая C-программа
   (NDK `aarch64-linux-android29-clang`, dlopen) в `/data/local/tmp` — шеллу библиотека тоже доступна.
 - Референсы: github.com/Pico-Developer/PICO-Unity-Integration-SDK (ветки release_2.5.0 … 3.4.0; `Runtime/Android/
@@ -403,7 +418,9 @@ tools/udp_listen.py            отладка (Python): показывает п�
 - **PTS1** шлем → ПК:7788, 36 байт, раз в 1 с, пока идёт трекинг (приложение 1.7+; старые драйверы пропускают —
   другая магия и размер): `body_status i8, body_error i8` (xrGetBodyTrackingStateBD, −1 неизвестно), `calibrated i8`
   (libtrackingclient, −1), `tracker_count u8` (0xFF — неизвестно), `12 × {id u8, battery i8 %}`, `calibration_request u16,
-  calibration_result i16` (итог последней просьбы откалибровать: 0 открыл рантайм, 1 запущено приложение калибровки,
+  calibration_result i16`; `id` — номер трекера в младших 4 битах и место на теле (`TrackerPlace`: 1 левая нога,
+  2 правая, 3 пояс, 0 неизвестно) в старших (1.8; драйвер и программа 1.7 места не знают и видят просто номера);
+  итог последней просьбы откалибровать (`calibration_result`: 0 открыл рантайм, 1 запущено приложение калибровки,
   2 запущено, но без права «поверх окон» могло не открыться, < 0 ошибка, −32768 — просьб не было).
 - **PTC1** драйвер → шлем:7789, 12 байт: `magic, data_port u16, command u16 (1 hello, 2 bye, 3 calibrate), rate_hz u16,
   request u16` (шлем читает rate, если длина ≥ 10; request — номер просьбы откалибровать, шлем выполняет каждую один
@@ -415,7 +432,7 @@ tools/udp_listen.py            отладка (Python): показывает п�
 - **JSON-состояние** драйвер → программа (127.0.0.1:7790) раз в 0.5 с: app, tracking, data, hmd, packets_per_s,
   headset_ip, body_tracked, trackers_ready, rate, calibration{valid, error, samples, yaw}, trackers[{name, role,
   enabled, added, valid}], pico{status, error, calibrated, count, calibration_request, calibration_result,
-  trackers[{id, battery}]} — только пока PTS1 свежий (< 3 с). Плюс `{"type":"poses","joints":[[x,y,z,valid]×24]}` ~30 раз/с (только пока
+  trackers[{id, place, battery}]} — только пока PTS1 свежий (< 3 с; place — с драйвера 1.8). Плюс `{"type":"poses","joints":[[x,y,z,valid]×24]}` ~30 раз/с (только пока
   программа подключена и идут данные) — для 3D-вида; координаты STAGE шлема.
 
 ### Приложение на шлеме
@@ -490,9 +507,10 @@ tools/udp_listen.py            отладка (Python): показывает п�
   симлинками libc.so.6 и т.п. + маленький загрузчик на C (dlopen RTLD_NOW + HmdDriverFactory). Ошибки `[Input] … has no configured binding` безвредны. Пока HMD не подключён,
   SteamVR держит трекеры в «started activation»; `Activate()` — при подключении HMD.
 - **Трекеры PICO (1.7)**: `Receiver` принимает PTS1 (36 байт) отдельно от PTB1; `update_pico_status` — свежий (< 3 с)
-  PTS1 → `pico` в JSON программе и заряд всем трекерам SteamVR (`TrackerDevice::set_battery` → `Prop_DeviceProvidesBatteryStatus_Bool`,
-  `Prop_DeviceBatteryPercentage_Float` = самый низкий из трекеров PICO / 100, `Prop_DeviceIsCharging_Bool` false;
-  нет PTS1 — «заряд неизвестен»). `calibrate=N` из PTA1 (новый N) → `receiver_.request_calibration(N)` — PTC1 3 три
+  PTS1 → `pico` в JSON программе и заряд трекерам SteamVR (`TrackerDevice::set_battery` → `Prop_DeviceProvidesBatteryStatus_Bool`,
+  `Prop_DeviceBatteryPercentage_Float`, `Prop_DeviceIsCharging_Bool` false; нет PTS1 — «заряд неизвестен»). С 1.8 —
+  по месту: `TrackerSpec::place` (ноги — *_foot, *_knee, *_hip, *_toes; пояс — waist, spine1), `battery_[TrackerPlace]`,
+  `battery_for(place)` — заряд трекера PICO на этом месте, иначе самый низкий; смена — строка в логе. `calibrate=N` из PTA1 (новый N) → `receiver_.request_calibration(N)` — PTC1 3 три
   раза через 200 мс; ответ шлема — строка в логе «калибровка трекеров PICO на шлеме: открыта/не открылась».
 - Обновлённый `.so` подхватывается только перезапуском SteamVR (`pkill -TERM -x vrmonitor; pkill -TERM -x
   vrserver`, затем `steam steam://rungameid/250820`; Steam Link на шлеме нужно переподключить).
@@ -594,7 +612,8 @@ tools/udp_listen.py            отладка (Python): показывает п�
   (AdwComboRow) → тост «Перезапустить» → `restartProgram`: Linux — `syscall.Exec` самого себя (тот же PID — годится
   и для Flatpak; сокеты CLOEXEC, D-Bus-имя освобождается), Windows — новый процесс `--wait-pid` и выход.
 - **Трекеры PICO (1.7)**: строка «Трекеры PICO» (`refreshPico`): подключены/откалиброваны/код ошибки, «подключено: N»,
-  заряд (< 20 % — предупреждение «зарядите трекеры»); `PicoStatus.NotCalibrated()` = status 0 и error 1 (или
+  заряд (`PicoStatus.BatteryText`: по местам — «левая нога 70 %, правая нога 70 %, пояс …», без мест — проценты;
+  < 20 % — предупреждение «зарядите трекеры»); `PicoStatus.NotCalibrated()` = status 0 и error 1 (или
   calibrated 0 при count > 0), count ≠ 0. Кнопка «Откалибровать» там и в карточке — `Controller.CalibrateTrackers`:
   если драйвер на связи — `calibrate=N` в PTA1 на 3 с и ждёт ответа в `pico.calibration_*` (0/1 — тост «Калибровка
   открыта на шлеме — наденьте его»); 2, ошибка или нет ответа — `launchCalibrationApp` по adb. При подключении к
